@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.footballpredictor.fetch</string>
+
+    <!-- Run scripts/fetch_latest.py via the project's venv python. -->
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/alpcanaras/football_predictor/venv/bin/python</string>
+        <string>/Users/alpcanaras/football_predictor/scripts/fetch_latest.py</string>
+        <string>--apply</string>
+        <string>--refresh-processed</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/alpcanaras/football_predictor</string>
+
+    <!-- Daily at 07:00 local time. Edit Hour/Minute below if you want another slot. -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- If the Mac was asleep at the scheduled time, run at next wake. -->
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/alpcanaras/football_predictor/logs/fetch.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/alpcanaras/football_predictor/logs/fetch.err</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/alpcanaras/football_predictor/venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

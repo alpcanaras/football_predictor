@@ -1,0 +1,6 @@
+{
+  "k_factor": 15,
+  "initial_rating": 1400.0,
+  "season_regression": 0.1,
+  "margin_factor": 0.3
+}

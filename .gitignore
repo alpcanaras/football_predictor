@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# macOS
+.DS_Store
+
+# Processed data & logs (regenerated from raw CSVs in data/<league>/)
+full_processed_data.csv
+training_log.txt
+validate_*.txt
+
+# Auto-fetch working dirs
+logs/
+data/_incoming/
+
+# Experimental model sets (large; regenerate as needed)
+models/experiments/
+
+# Legacy / archived models and scripts (large, superseded)
+legacy/
+
+# Transient downloaded fixtures + odds feed (re-fetched on demand)
+data/_fixtures/
+
+# Reports
+reports/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
