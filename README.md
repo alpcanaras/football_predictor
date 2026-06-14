@@ -21,7 +21,10 @@ Predictor_latest.ipynb        Interactive prediction + analytics notebook
 
 ## Everyday use
 
-**Easiest: the web app (no notebook, no cells).**
+**Easiest: double-click `run.command`** (macOS) — it sets up the environment
+on first run and opens the app in your browser. Nothing else to install.
+
+Or from a terminal:
 
 ```bash
 pip install streamlit      # one-time

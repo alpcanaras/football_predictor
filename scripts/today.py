@@ -80,6 +80,10 @@ def club_section(days: int) -> list[dict]:
             'Pick': pick, 'Conf': prob,
             'Anchored': 'market' in pred,
         }
+        # relevant odds, shown alongside the model's view
+        if 'market' in pred:
+            o = pred['market']['odds']
+            row['Odds(1/X/2)'] = f"{o['home']:.2f}/{o['draw']:.2f}/{o['away']:.2f}"
         if 'ou25' in pred:
             row['P(O2.5)'] = pred['ou25']['over']
         if 'btts' in pred:

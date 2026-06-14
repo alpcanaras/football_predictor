@@ -23,8 +23,10 @@ validate_*.txt
 logs/
 data/_incoming/
 
-# Experimental model sets (large; regenerate as needed)
-models/experiments/
+# Experimental model sets (large; regenerate as needed) — but keep the
+# pooled production model, which predict.py blends into 1X2.
+models/experiments/*
+!models/experiments/pooled/
 
 # Legacy / archived models and scripts (large, superseded)
 legacy/

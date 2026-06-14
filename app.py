@@ -91,24 +91,37 @@ with tab_match:
 
             p = pred.get('1x2', {})
             if p:
-                cc = st.columns(3)
-                with cc[0]:
-                    prob_bar(f"🏠 {home}", p['home'])
-                with cc[1]:
-                    prob_bar("🤝 Draw", p['draw'])
-                with cc[2]:
-                    prob_bar(f"✈️ {away}", p['away'])
-                if anchored and '1x2_model' in pred:
-                    m = pred['1x2_model']
-                    o = pred['market']['odds']
-                    st.caption(
-                        f"Model alone: {m['home']:.0%}/{m['draw']:.0%}/"
-                        f"{m['away']:.0%}  ·  Book odds: "
-                        f"{o['home']:.2f}/{o['draw']:.2f}/{o['away']:.2f}")
+                # Stats-first table: probability, bookmaker odds, implied %, edge
+                mkt = pred.get('market')
+                rows = []
+                for lbl, key in [(f"🏠 {home}", 'home'), ("🤝 Draw", 'draw'),
+                                 (f"✈️ {away}", 'away')]:
+                    r = {'Outcome': lbl, 'Model': f"{p[key]:.0%}",
+                         'Fair odds': f"{(1/p[key]):.2f}" if p[key] > 0 else '—'}
+                    if mkt:
+                        imp = mkt['implied'][key]
+                        r['Book odds'] = f"{mkt['odds'][key]:.2f}"
+                        r['Book %'] = f"{imp:.0%}"
+                        edge = p[key] - imp
+                        r['Edge'] = f"{edge:+.0%}"
+                        r['Value'] = '✅' if edge > 0.03 else ''
+                    rows.append(r)
+                st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                             hide_index=True)
+                if mkt:
+                    st.caption("Edge = model − bookmaker implied probability. "
+                               "✅ marks a model edge over 3% (treat as a *lean*, "
+                               "not a sure thing — the book is sharp).")
+                else:
+                    st.caption("No live odds for this fixture in the feed — "
+                               "showing model probabilities only.")
 
             cols = st.columns(3)
             if 'ou25' in pred:
-                cols[0].metric("Over 2.5", f"{pred['ou25']['over']:.0%}")
+                ou = f"{pred['ou25']['over']:.0%}"
+                if pred.get('market', {}).get('ou25_odds'):
+                    ou += f"  (book {pred['market']['ou25_odds']['over']:.2f})"
+                cols[0].metric("Over 2.5", ou)
             if 'btts' in pred:
                 cols[1].metric("BTTS", f"{pred['btts']['yes']:.0%}")
             if 'xg' in pred:
