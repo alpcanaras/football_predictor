@@ -190,6 +190,21 @@ python scripts/fixtures.py         # inspect the current fixtures+odds feed
 Dixon-Coles baseline used as a third blend component (currently near-zero
 weight; kept for leagues/periods without odds).
 
+## Pooled cross-league model (1X2)
+
+[`scripts/pooled.py`](scripts/pooled.py) trains one model over all 75k matches
+with the league as one-hot features (partial pooling). Validated out-of-sample
+(held out at 2026-02-01, 2,654 matches): per-league 1.0242, pooled 1.0157,
+**50/50 blend 1.0149** log-loss — so `predict.py` now averages the per-league
+1X2 ensemble with the pooled model. (O/U 2.5 was tested too; per-league won
+there, so pooling is 1X2-only.) Retrain on all data after a refresh with:
+
+```bash
+python scripts/pooled.py train --markets 1x2          # production (no cutoff)
+python scripts/pooled.py train --markets 1x2 --cutoff 2026-02-01  # + evaluate
+python scripts/pooled.py evaluate                     # pooled vs per-league vs book
+```
+
 ## International / World Cup module
 
 National teams are handled by a separate model in

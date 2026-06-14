@@ -91,6 +91,25 @@ def predict_match(home_team, away_team, team_stats, team_to_league,
     return predictions
 
 
+def _blend_pooled_1x2(p, X, league, model_set):
+    """Average the per-league 1X2 probabilities with the pooled cross-league
+    model (50/50). Validated out-of-sample: per-league 1.0242, pooled 1.0157,
+    50/50 blend 1.0149 log-loss. No-op if pooled models aren't present or for
+    non-default model sets. `p` and the return are class order [A, D, H]."""
+    if model_set != 'current':
+        return p
+    try:
+        from scripts import pooled as pooled_mod
+        fx = X.copy()
+        fx['league'] = league
+        pp = pooled_mod.pooled_proba('1x2', fx)
+    except Exception:
+        pp = None
+    if pp is None:
+        return p
+    return 0.5 * np.asarray(p) + 0.5 * pp[0]
+
+
 def _market_anchor(predictions: dict, league: str,
                    home_team: str, away_team: str) -> None:
     """Blend the 1X2 probabilities with bookmaker odds when the match is in
@@ -172,6 +191,7 @@ def _predict_all_markets(fixture_df, league, include_xg, model_set='current'):
     if ms:
         try:
             p = _ensemble_proba(ms, X)[0]
+            p = _blend_pooled_1x2(p, X, league, model_set)
             result['1x2'] = {'home': float(p[2]), 'draw': float(p[1]),
                              'away': float(p[0])}
         except Exception:
