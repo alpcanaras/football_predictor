@@ -192,6 +192,9 @@ with tab_wc:
                             '1 %': round(pr['p_home'] * 100),
                             'X %': round(pr['p_draw'] * 100),
                             '2 %': round(pr['p_away'] * 100),
+                            'Fair(1)': round(1 / pr['p_home'], 2) if pr['p_home'] > 0 else None,
+                            'Fair(X)': round(1 / pr['p_draw'], 2) if pr['p_draw'] > 0 else None,
+                            'Fair(2)': round(1 / pr['p_away'], 2) if pr['p_away'] > 0 else None,
                             'O2.5 %': round(pr['p_over25'] * 100),
                             'BTTS %': round(pr['p_btts'] * 100),
                         })
