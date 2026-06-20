@@ -55,28 +55,15 @@ def prob_bar(label, p):
     st.progress(min(max(p, 0.0), 1.0))
 
 
-def _blank_coupon(n):
-    return pd.DataFrame({'home': [''] * n, 'away': [''] * n,
-                         'o1': [None] * n, 'ox': [None] * n, 'o2': [None] * n})
-
-
 def _add_to_coupon(home, away, pred):
-    """Drop a match (with live odds if the prediction carries them) into the
-    Toto coupon — fills the first blank row, else appends."""
-    if 'coupon' not in st.session_state:
-        st.session_state.coupon = _blank_coupon(15)
-        st.session_state.coupon_ver = 0
+    """Append a match line to the Toto text coupon (with live odds if the
+    prediction carries them)."""
     odds = ((pred or {}).get('market') or {}).get('odds') or {}
-    new = {'home': home, 'away': away, 'o1': odds.get('home'),
-           'ox': odds.get('draw'), 'o2': odds.get('away')}
-    df = st.session_state.coupon.copy()
-    blanks = df.index[df['home'].astype(str).str.strip() == '']
-    if len(blanks):
-        df.loc[blanks[0]] = new
-    else:
-        df.loc[len(df)] = new
-    st.session_state.coupon = df
-    st.session_state.coupon_ver = st.session_state.get('coupon_ver', 0) + 1
+    line = f"{home} - {away}"
+    if odds.get('home') and odds.get('draw') and odds.get('away'):
+        line += f"  {odds['home']:.2f} {odds['draw']:.2f} {odds['away']:.2f}"
+    cur = st.session_state.get('coupon_text', '').rstrip()
+    st.session_state.coupon_text = (cur + '\n' + line) if cur else line
 
 
 # ----------------------------------------------------------------------------
@@ -245,11 +232,11 @@ with tab_toto:
     import numpy as np
     from scripts import toto
 
-    st.caption("Enter this week's coupon. Bookmaker 1X2 odds (o1/ox/o2) give "
-               "the most accurate probabilities; where odds are blank the model "
-               "fills in — club teams via the league ensembles, national teams "
-               "(World Cup) via the international model. You can also push a "
-               "match here from the 🎯 Match tab.")
+    st.caption("Paste your coupon below — **one match per line**, written "
+               "`Home - Away`. Add odds after if you have them "
+               "(`Home - Away 2.10 3.30 3.40`). No odds → the model fills it in: "
+               "club teams via the league models, national teams (World Cup) via "
+               "the international model. Or push a match in from the 🎯 Match tab.")
     cset = st.columns(3)
     game = cset[0].radio("Game", list(toto.GAMES), horizontal=True,
                          format_func=lambda g: g.capitalize())
@@ -259,41 +246,32 @@ with tab_toto:
                                        "toss-ups with doubles/triples.")
     cset[2].metric("Coupon", f"{n_exp} matches · prize {threshold}+")
 
-    if 'coupon' not in st.session_state:
-        st.session_state.coupon = _blank_coupon(n_exp)
-        st.session_state.coupon_ver = 0
+    if 'coupon_text' not in st.session_state:
+        st.session_state.coupon_text = ''
+    st.button("🗑️ Clear", on_click=lambda: st.session_state.update(coupon_text=''))
 
-    bc1, bc2, _ = st.columns([1, 1, 5])
-    if bc1.button("➕ Row"):
-        df = st.session_state.coupon.copy()
-        df.loc[len(df)] = {'home': '', 'away': '', 'o1': None,
-                           'ox': None, 'o2': None}
-        st.session_state.coupon = df
-        st.session_state.coupon_ver += 1
-    if bc2.button("🗑️ Clear"):
-        st.session_state.coupon = _blank_coupon(n_exp)
-        st.session_state.coupon_ver += 1
+    text = st.text_area(
+        "Matches (one per line)", key='coupon_text', height=320,
+        placeholder="Norway - Italy\nTurkey - Spain  1.95 3.40 3.90\n"
+                    "Brazil - Morocco\n…")
 
-    edited = st.data_editor(st.session_state.coupon, num_rows="dynamic",
-                            use_container_width=True,
-                            key=f"toto_ed_{st.session_state.coupon_ver}")
-    st.session_state.coupon = edited
+    parsed = toto.parse_lines(text)
+    st.caption(f"Parsed **{len(parsed)}** matches (this game wants {n_exp}).")
 
     if st.button("Analyze coupon", type="primary"):
-        ctx = {'hist': hist, 'team_stats': team_stats,
-               'team_to_league': team_to_league,
-               'teams': set(team_to_league),
-               'weights': toto._load_blend_weights()}
-        rows = edited.dropna(subset=['home', 'away'])
-        rows = rows[(rows['home'].astype(str).str.strip() != '')]
-        if rows.empty:
-            st.info("Add some matches first.")
+        if parsed.empty:
+            st.info("Paste some matches first — one `Home - Away` per line.")
         else:
-            out, sorted_probs = [], []
-            for _, r in rows.iterrows():
+            ctx = {'hist': hist, 'team_stats': team_stats,
+                   'team_to_league': team_to_league,
+                   'teams': set(team_to_league),
+                   'weights': toto._load_blend_weights()}
+            out, sorted_probs, unmatched = [], [], []
+            for _, r in parsed.iterrows():
                 p, src, model = toto.match_probs(r, ctx)
                 if p is None:
                     p = np.array([0.34, 0.33, 0.33]); src = 'no data'
+                    unmatched.append(f"{r['home']} v {r['away']}")
                 order = np.argsort(-p)
                 flag = ''
                 has_odds = all(pd.notna(r.get(c)) for c in ('o1', 'ox', 'o2'))
@@ -316,11 +294,15 @@ with tab_toto:
                        "— bet it only if a book pays more. Src: **blend** "
                        "(odds+model) · **odds** · **model** (club) · **intl** "
                        "(World Cup model) · **no data** (defaulted to 1∕3 each).")
+            if unmatched:
+                st.warning("Couldn't match — defaulted to 1/3 each. Check the "
+                           "spelling, or add odds (`… 2.10 3.30 3.40`):\n\n- "
+                           + "\n- ".join(unmatched))
 
             q_single = [sp[0] for sp in sorted_probs]
             d = toto.pb_distribution(q_single)
             st.markdown(f"**Single column** — expected correct ≈ "
-                        f"{sum(q_single):.1f}/{len(rows)}")
+                        f"{sum(q_single):.1f}/{len(parsed)}")
             tiers = st.columns(min(4, top_tier - threshold + 1))
             for k, t in enumerate(range(threshold, top_tier + 1)):
                 if t < len(d) and k < len(tiers):

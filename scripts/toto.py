@@ -50,6 +50,14 @@ GAMES = {                       # (n_matches, prize_threshold, top_tier)
 OUTCOMES = ['1', 'X', '2']      # home / draw / away
 
 
+def _fold(s):
+    """Lowercase + strip accents, so 'curacao' matches 'Curaçao', 'besiktas'
+    matches 'Beşiktaş', 'koln' matches 'Köln', etc."""
+    import unicodedata
+    s = unicodedata.normalize('NFKD', str(s))
+    return ''.join(c for c in s if not unicodedata.combining(c)).lower().strip()
+
+
 # =============================================================================
 # PROBABILITIES PER MATCH
 # =============================================================================
@@ -127,11 +135,11 @@ def _model_probs(row, ctx):
 def _fuzzy(name, teams):
     if name in teams:
         return name
-    low = str(name).lower().strip()
-    hits = [t for t in teams if low == t.lower()]
+    low = _fold(name)
+    hits = [t for t in teams if _fold(t) == low]
     if hits:
         return hits[0]
-    hits = [t for t in teams if low in t.lower() or t.lower() in low]
+    hits = [t for t in teams if low and (low in _fold(t) or _fold(t) in low)]
     return hits[0] if len(hits) == 1 else None
 
 
@@ -142,7 +150,8 @@ _INTL_ALIASES = {                       # common shorthands -> dataset name
     'uae': 'United Arab Emirates', 'korea': 'South Korea',
     'czechia': 'Czech Republic', 'bosnia': 'Bosnia and Herzegovina',
     'drc': 'DR Congo', "cote d'ivoire": 'Ivory Coast', 'turkiye': 'Turkey',
-    'türkiye': 'Turkey', 'cape verde islands': 'Cape Verde',
+    'cape verde islands': 'Cape Verde', 'holland': 'Netherlands',
+    'ivory coast': 'Ivory Coast',
 }
 
 
@@ -157,15 +166,15 @@ def _load_intl():
         ratings, hist = intl.run_elo(df)
         model = intl.GoalModel().fit(hist)
         _INTL_CACHE = {'ratings': ratings, 'model': model,
-                       'names': {t.lower(): t for t in ratings}}
+                       'names': {_fold(t): t for t in ratings}}
     except Exception:
         _INTL_CACHE = {'ratings': {}, 'model': None, 'names': {}}
     return _INTL_CACHE
 
 
 def _intl_name(name, ic):
-    low = str(name).lower().strip()
-    low = _INTL_ALIASES.get(low, low).lower()
+    low = _fold(name)
+    low = _fold(_INTL_ALIASES.get(low, low))
     if low in ic['names']:
         return ic['names'][low]
     hits = [orig for l, orig in ic['names'].items()
@@ -334,6 +343,41 @@ def run(coupon_path, game, budget, use_model=True):
             for idx, h, a, c in up:
                 kind = 'TRIPLE (1X2)' if c == 3 else 'double'
                 print(f"      #{idx:>2} {h} v {a}  -> {kind}")
+
+
+def parse_lines(text):
+    """Parse a pasted coupon into a DataFrame.
+
+    One match per line: 'Home - Away' (also accepts ' v ', ' vs ', ' x ', ':',
+    or a bare '-'). Optional bookmaker odds as the last three numbers on the
+    line, e.g. 'Norway - Italy 2.10 3.30 3.40'. Blank/garbage lines are skipped.
+    """
+    seps = [' - ', ' – ', ' — ', ' vs. ', ' vs ', ' v ', ' x ', ' : ',
+            ' V ', ' X ', '–', '—', ' - ', '-', ':']
+    recs = []
+    for raw in str(text).splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        o1 = ox = o2 = None
+        toks = line.split()
+        if len(toks) >= 3:                       # trailing 3 numbers -> odds
+            try:
+                tail = [float(t.replace(',', '.')) for t in toks[-3:]]
+                if all(v > 1.0 for v in tail):
+                    o1, ox, o2 = tail
+                    line = ' '.join(toks[:-3]).strip()
+            except ValueError:
+                pass
+        home, away = line, ''
+        for s in seps:
+            if s in line:
+                home, away = line.split(s, 1)
+                break
+        if home.strip():
+            recs.append({'home': home.strip(), 'away': away.strip(),
+                         'o1': o1, 'ox': ox, 'o2': o2})
+    return pd.DataFrame(recs, columns=['home', 'away', 'o1', 'ox', 'o2'])
 
 
 def write_template(path='coupon.csv'):
