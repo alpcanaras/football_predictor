@@ -55,6 +55,30 @@ def prob_bar(label, p):
     st.progress(min(max(p, 0.0), 1.0))
 
 
+def _blank_coupon(n):
+    return pd.DataFrame({'home': [''] * n, 'away': [''] * n,
+                         'o1': [None] * n, 'ox': [None] * n, 'o2': [None] * n})
+
+
+def _add_to_coupon(home, away, pred):
+    """Drop a match (with live odds if the prediction carries them) into the
+    Toto coupon — fills the first blank row, else appends."""
+    if 'coupon' not in st.session_state:
+        st.session_state.coupon = _blank_coupon(15)
+        st.session_state.coupon_ver = 0
+    odds = ((pred or {}).get('market') or {}).get('odds') or {}
+    new = {'home': home, 'away': away, 'o1': odds.get('home'),
+           'ox': odds.get('draw'), 'o2': odds.get('away')}
+    df = st.session_state.coupon.copy()
+    blanks = df.index[df['home'].astype(str).str.strip() == '']
+    if len(blanks):
+        df.loc[blanks[0]] = new
+    else:
+        df.loc[len(df)] = new
+    st.session_state.coupon = df
+    st.session_state.coupon_ver = st.session_state.get('coupon_ver', 0) + 1
+
+
 # ----------------------------------------------------------------------------
 hist, team_stats, team_to_league, leagues, teams_by_league = load_everything()
 
@@ -79,57 +103,68 @@ with tab_match:
             pred = predict_mod.predict_match(
                 home, away, team_stats, team_to_league, hist,
                 include_xg=True, prediction_date=pd.Timestamp.now())
+            st.session_state.match_pred = {'home': home, 'away': away,
+                                           'pred': pred}
         except Exception as e:
-            st.error(f"Could not predict: {e}")
-            pred = None
+            st.session_state.match_pred = {'home': home, 'away': away,
+                                           'error': str(e)}
 
-        if pred:
-            anchored = 'market' in pred
-            st.subheader(f"{home} vs {away}")
-            if anchored:
-                st.caption("✅ 1X2 / O-U anchored to live bookmaker odds")
+    mp = st.session_state.get('match_pred')
+    if mp and mp.get('error'):
+        st.error(f"Could not predict: {mp['error']}")
+    elif mp and mp.get('pred'):
+        home_p, away_p, pred = mp['home'], mp['away'], mp['pred']
+        anchored = 'market' in pred
+        st.subheader(f"{home_p} vs {away_p}")
+        if anchored:
+            st.caption("✅ 1X2 / O-U anchored to live bookmaker odds")
 
-            p = pred.get('1x2', {})
-            if p:
-                # Stats-first table: probability, bookmaker odds, implied %, edge
-                mkt = pred.get('market')
-                rows = []
-                for lbl, key in [(f"🏠 {home}", 'home'), ("🤝 Draw", 'draw'),
-                                 (f"✈️ {away}", 'away')]:
-                    r = {'Outcome': lbl, 'Model': f"{p[key]:.0%}",
-                         'Fair odds': f"{(1/p[key]):.2f}" if p[key] > 0 else '—'}
-                    if mkt:
-                        imp = mkt['implied'][key]
-                        r['Book odds'] = f"{mkt['odds'][key]:.2f}"
-                        r['Book %'] = f"{imp:.0%}"
-                        edge = p[key] - imp
-                        r['Edge'] = f"{edge:+.0%}"
-                        r['Value'] = '✅' if edge > 0.03 else ''
-                    rows.append(r)
-                st.dataframe(pd.DataFrame(rows), use_container_width=True,
-                             hide_index=True)
+        p = pred.get('1x2', {})
+        if p:
+            # Stats-first table: probability, bookmaker odds, implied %, edge
+            mkt = pred.get('market')
+            rows = []
+            for lbl, key in [(f"🏠 {home_p}", 'home'), ("🤝 Draw", 'draw'),
+                             (f"✈️ {away_p}", 'away')]:
+                r = {'Outcome': lbl, 'Model': f"{p[key]:.0%}",
+                     'Fair odds': f"{(1/p[key]):.2f}" if p[key] > 0 else '—'}
                 if mkt:
-                    st.caption("Edge = model − bookmaker implied probability. "
-                               "✅ marks a model edge over 3% (treat as a *lean*, "
-                               "not a sure thing — the book is sharp).")
-                else:
-                    st.caption("No live odds for this fixture in the feed — "
-                               "showing model probabilities only.")
+                    imp = mkt['implied'][key]
+                    r['Book odds'] = f"{mkt['odds'][key]:.2f}"
+                    r['Book %'] = f"{imp:.0%}"
+                    edge = p[key] - imp
+                    r['Edge'] = f"{edge:+.0%}"
+                    r['Value'] = '✅' if edge > 0.03 else ''
+                rows.append(r)
+            st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                         hide_index=True)
+            if mkt:
+                st.caption("Edge = model − bookmaker implied probability. "
+                           "✅ marks a model edge over 3% (treat as a *lean*, "
+                           "not a sure thing — the book is sharp).")
+            else:
+                st.caption("No live odds for this fixture in the feed — "
+                           "showing model probabilities only.")
 
-            cols = st.columns(3)
-            if 'ou25' in pred:
-                ou = f"{pred['ou25']['over']:.0%}"
-                if pred.get('market', {}).get('ou25_odds'):
-                    ou += f"  (book {pred['market']['ou25_odds']['over']:.2f})"
-                cols[0].metric("Over 2.5", ou)
-            if 'btts' in pred:
-                cols[1].metric("BTTS", f"{pred['btts']['yes']:.0%}")
-            if 'xg' in pred:
-                cols[2].metric("xG", f"{pred['xg']['home']:.1f} – "
-                                     f"{pred['xg']['away']:.1f}")
+        cols = st.columns(3)
+        if 'ou25' in pred:
+            ou = f"{pred['ou25']['over']:.0%}"
+            if pred.get('market', {}).get('ou25_odds'):
+                ou += f"  (book {pred['market']['ou25_odds']['over']:.2f})"
+            cols[0].metric("Over 2.5", ou)
+        if 'btts' in pred:
+            cols[1].metric("BTTS", f"{pred['btts']['yes']:.0%}")
+        if 'xg' in pred:
+            cols[2].metric("xG", f"{pred['xg']['home']:.1f} – "
+                                 f"{pred['xg']['away']:.1f}")
 
-            with st.expander("Full breakdown"):
-                st.text(utils.format_prediction_table(pred))
+        if st.button("➕ Add to Toto coupon"):
+            _add_to_coupon(home_p, away_p, pred)
+            st.success(f"Added **{home_p} v {away_p}** to the Toto coupon — "
+                       "see the 🎟️ tab.")
+
+        with st.expander("Full breakdown"):
+            st.text(utils.format_prediction_table(pred))
 
 
 # ============================================================================
@@ -211,8 +246,10 @@ with tab_toto:
     from scripts import toto
 
     st.caption("Enter this week's coupon. Bookmaker 1X2 odds (o1/ox/o2) give "
-               "the most accurate probabilities; the model refines matches "
-               "whose teams it knows.")
+               "the most accurate probabilities; where odds are blank the model "
+               "fills in — club teams via the league ensembles, national teams "
+               "(World Cup) via the international model. You can also push a "
+               "match here from the 🎯 Match tab.")
     cset = st.columns(3)
     game = cset[0].radio("Game", list(toto.GAMES), horizontal=True,
                          format_func=lambda g: g.capitalize())
@@ -222,11 +259,25 @@ with tab_toto:
                                        "toss-ups with doubles/triples.")
     cset[2].metric("Coupon", f"{n_exp} matches · prize {threshold}+")
 
-    seed = pd.DataFrame({'home': [''] * n_exp, 'away': [''] * n_exp,
-                         'o1': [None] * n_exp, 'ox': [None] * n_exp,
-                         'o2': [None] * n_exp})
-    edited = st.data_editor(seed, num_rows="dynamic", use_container_width=True,
-                            key=f"toto_{game}")
+    if 'coupon' not in st.session_state:
+        st.session_state.coupon = _blank_coupon(n_exp)
+        st.session_state.coupon_ver = 0
+
+    bc1, bc2, _ = st.columns([1, 1, 5])
+    if bc1.button("➕ Row"):
+        df = st.session_state.coupon.copy()
+        df.loc[len(df)] = {'home': '', 'away': '', 'o1': None,
+                           'ox': None, 'o2': None}
+        st.session_state.coupon = df
+        st.session_state.coupon_ver += 1
+    if bc2.button("🗑️ Clear"):
+        st.session_state.coupon = _blank_coupon(n_exp)
+        st.session_state.coupon_ver += 1
+
+    edited = st.data_editor(st.session_state.coupon, num_rows="dynamic",
+                            use_container_width=True,
+                            key=f"toto_ed_{st.session_state.coupon_ver}")
+    st.session_state.coupon = edited
 
     if st.button("Analyze coupon", type="primary"):
         ctx = {'hist': hist, 'team_stats': team_stats,
@@ -254,11 +305,17 @@ with tab_toto:
                             '1': round(p[0] * 100), 'X': round(p[1] * 100),
                             '2': round(p[2] * 100),
                             'Pick': toto.OUTCOMES[order[0]],
+                            'Fair': round(1 / p[order[0]], 2)
+                            if p[order[0]] > 0 else None,
                             'Src': src, 'Note': flag})
                 sorted_probs.append(np.sort(p)[::-1])
 
             st.dataframe(pd.DataFrame(out), use_container_width=True,
                          hide_index=True)
+            st.caption("Fair = fair decimal odds for the pick (1 ÷ probability) "
+                       "— bet it only if a book pays more. Src: **blend** "
+                       "(odds+model) · **odds** · **model** (club) · **intl** "
+                       "(World Cup model) · **no data** (defaulted to 1∕3 each).")
 
             q_single = [sp[0] for sp in sorted_probs]
             d = toto.pb_distribution(q_single)

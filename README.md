@@ -45,6 +45,12 @@ least-predictable matches to cover with doubles/triples). The maths is exact
 (Poisson-binomial over independent matches); coverage is allocated greedily by
 threshold-probability gained per column spent.
 
+Where a row has no odds the model fills the probabilities in: **club** teams via
+the league ensembles, **national** teams (World Cup weeks) via the international
+Elo+Poisson model — so a coupon of `turkey`/`paraguay`/… is priced properly
+instead of defaulting to 1/3 each. In the app you can also push a match straight
+from the 🎯 Match tab into the coupon with **➕ Add to Toto**.
+
 ```bash
 python scripts/toto.py --template                              # blank coupon.csv
 python scripts/toto.py --coupon coupon.csv --game turkish --budget 64

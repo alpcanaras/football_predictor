@@ -74,24 +74,33 @@ def match_probs(row, ctx):
     """Return (probs[1,X,2], source, model_probs_or_None).
 
     Priority: blend(model, odds) when both exist; else whichever is present.
-    `ctx` holds the loaded model context (or None to skip model lookup).
+    The model layer tries the club ensemble first, then falls back to the
+    national-team (international/World Cup) Elo+Poisson model, so coupons full
+    of national sides (WC weeks) get real probabilities, not 1/3-1/3-1/3.
+    `ctx` holds the loaded club-model context (or None to skip the club lookup).
     """
     has_odds = all(pd.notna(row.get(c)) for c in ('o1', 'ox', 'o2'))
     book = _devig(row['o1'], row['ox'], row['o2']) if has_odds else None
 
-    model = None
+    model, kind = None, None
     if ctx is not None:
-        model = _model_probs(row, ctx)   # [1,X,2] or None
+        model = _model_probs(row, ctx)        # club ensemble [1,X,2] or None
+        if model is not None:
+            kind = 'model'
+    if model is None:                          # national-team fallback
+        intl = _intl_probs(row.get('home'), row.get('away'))
+        if intl is not None:
+            model, kind = intl, 'intl'
 
     if book is not None and model is not None:
-        w_m, w_b = ctx['weights']
+        w_m, w_b = ctx['weights'] if ctx else (0.0, 1.0)
         logp = w_m * np.log(np.clip(model, 1e-9, 1)) + w_b * np.log(book)
         p = np.exp(logp - logp.max()); p /= p.sum()
         return p, 'blend', model
     if book is not None:
         return book, 'odds', model
     if model is not None:
-        return model, 'model', model
+        return model, kind, model
     return None, 'none', None
 
 
@@ -124,6 +133,59 @@ def _fuzzy(name, teams):
         return hits[0]
     hits = [t for t in teams if low in t.lower() or t.lower() in low]
     return hits[0] if len(hits) == 1 else None
+
+
+# --- national-team (World Cup / international) fallback --------------------
+_INTL_CACHE = None
+_INTL_ALIASES = {                       # common shorthands -> dataset name
+    'usa': 'United States', 'united states of america': 'United States',
+    'uae': 'United Arab Emirates', 'korea': 'South Korea',
+    'czechia': 'Czech Republic', 'bosnia': 'Bosnia and Herzegovina',
+    'drc': 'DR Congo', "cote d'ivoire": 'Ivory Coast', 'turkiye': 'Turkey',
+    'türkiye': 'Turkey', 'cape verde islands': 'Cape Verde',
+}
+
+
+def _load_intl():
+    """Load + cache international Elo ratings and the Poisson goal model once."""
+    global _INTL_CACHE
+    if _INTL_CACHE is not None:
+        return _INTL_CACHE
+    try:
+        from scripts import international as intl
+        df = intl.load_results()
+        ratings, hist = intl.run_elo(df)
+        model = intl.GoalModel().fit(hist)
+        _INTL_CACHE = {'ratings': ratings, 'model': model,
+                       'names': {t.lower(): t for t in ratings}}
+    except Exception:
+        _INTL_CACHE = {'ratings': {}, 'model': None, 'names': {}}
+    return _INTL_CACHE
+
+
+def _intl_name(name, ic):
+    low = str(name).lower().strip()
+    low = _INTL_ALIASES.get(low, low).lower()
+    if low in ic['names']:
+        return ic['names'][low]
+    hits = [orig for l, orig in ic['names'].items()
+            if low and (low in l or l in low)]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _intl_probs(home, away, neutral=True):
+    """National-team 1X2 via the international model (neutral venue default)."""
+    if home is None or away is None:
+        return None
+    ic = _load_intl()
+    if ic['model'] is None:
+        return None
+    h, a = _intl_name(home, ic), _intl_name(away, ic)
+    if not h or not a:
+        return None
+    p = ic['model'].market_probs(ic['ratings'][h], ic['ratings'][a],
+                                 neutral=neutral)
+    return np.array([p['p_home'], p['p_draw'], p['p_away']])
 
 
 def _load_context():
