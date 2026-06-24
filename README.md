@@ -48,8 +48,14 @@ threshold-probability gained per column spent.
 Where a row has no odds the model fills the probabilities in: **club** teams via
 the league ensembles, **national** teams (World Cup weeks) via the international
 Elo+Poisson model — so a coupon of `turkey`/`paraguay`/… is priced properly
-instead of defaulting to 1/3 each. In the app you can also push a match straight
-from the 🎯 Match tab into the coupon with **➕ Add to Toto**.
+instead of defaulting to 1/3 each. Name matching is accent-folded, so `curacao`,
+`besiktas`, `koln` resolve to `Curaçao`, `Beşiktaş`, `Köln`.
+
+In the app the Toto tab keeps **two separate coupons** (Turkish + German),
+entered as pasted `Home - Away` lines (one per match, optional `o1 ox o2` after).
+They're saved to `data/_toto/<game>.txt`, so they **persist across reloads and
+browser tabs** until you clear them. Any match in the 🎯 Match, 📅 Fixtures or
+🌍 World Cup tabs can be pushed into either coupon with the **➕ Add** control.
 
 ```bash
 python scripts/toto.py --template                              # blank coupon.csv

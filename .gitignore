@@ -34,6 +34,9 @@ legacy/
 # Transient downloaded fixtures + odds feed (re-fetched on demand)
 data/_fixtures/
 
+# Personal weekly Toto coupons (persisted locally between sessions)
+data/_toto/
+
 # Reports
 reports/
 

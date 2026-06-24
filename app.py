@@ -6,10 +6,15 @@ A point-and-click interface. No notebooks, no cells.
     pip install streamlit          # one-time
     streamlit run app.py           # opens in your browser
 
-Three tabs:
+Four tabs:
   * Match      — pick a league + two teams, get the full prediction card
   * Fixtures   — every upcoming match with models, anchored to live odds
   * World Cup  — today's / upcoming national-team matches
+  * Toto       — two persistent coupons (Turkish + German), system optimizer
+
+Any match in the first three tabs can be pushed into either coupon. Coupons are
+saved to data/_toto/<game>.txt, so they survive reloads and new browser tabs
+until you clear them.
 """
 
 import os
@@ -18,13 +23,18 @@ import datetime as dt
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import numpy as np
 import pandas as pd
 import streamlit as st
 
 from scripts import config, data_loader, utils
 from scripts import predict as predict_mod
+from scripts import toto
 
 st.set_page_config(page_title="Football Predictor", page_icon="⚽", layout="wide")
+
+COUPON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'data', '_toto')
 
 
 # ----------------------------------------------------------------------------
@@ -50,20 +60,96 @@ def disp(lg):
     return config.LEAGUE_REGISTRY.get(lg, {}).get('display_name', lg)
 
 
-def prob_bar(label, p):
-    st.markdown(f"**{label}** — {p:.0%}")
-    st.progress(min(max(p, 0.0), 1.0))
+# ----------------------------------------------------------------------------
+# Persistent coupons (disk-backed, one file per game)
+# ----------------------------------------------------------------------------
+def _coupon_path(game):
+    return os.path.join(COUPON_DIR, f"{game}.txt")
 
 
-def _add_to_coupon(home, away, pred):
-    """Append a match line to the Toto text coupon (with live odds if the
-    prediction carries them)."""
-    odds = ((pred or {}).get('market') or {}).get('odds') or {}
+def _load_coupon_file(game):
+    try:
+        with open(_coupon_path(game), encoding='utf-8') as f:
+            return f.read()
+    except OSError:
+        return ''
+
+
+def _save_coupon_file(game, text):
+    try:
+        os.makedirs(COUPON_DIR, exist_ok=True)
+        with open(_coupon_path(game), 'w', encoding='utf-8') as f:
+            f.write(text or '')
+    except OSError:
+        pass
+
+
+def _fmt_line(home, away, odds=None):
     line = f"{home} - {away}"
-    if odds.get('home') and odds.get('draw') and odds.get('away'):
+    if odds and all(odds.get(k) for k in ('home', 'draw', 'away')):
         line += f"  {odds['home']:.2f} {odds['draw']:.2f} {odds['away']:.2f}"
-    cur = st.session_state.get('coupon_text', '').rstrip()
-    st.session_state.coupon_text = (cur + '\n' + line) if cur else line
+    return line
+
+
+def _append_line(game, home, away, odds=None):
+    """Append a match to a game's coupon. Disk is the source of truth, so this
+    is safe even if Streamlit dropped the inactive coupon's widget state."""
+    cur = _load_coupon_file(game).rstrip()
+    new = (cur + '\n' + _fmt_line(home, away, odds)) if cur \
+        else _fmt_line(home, away, odds)
+    _save_coupon_file(game, new)
+    st.session_state[f'coupon_{game}'] = new
+
+
+def _parse_slash_odds(s):
+    if not s:
+        return None
+    try:
+        h, d, a = [float(x) for x in str(s).split('/')]
+        return {'home': h, 'draw': d, 'away': a}
+    except Exception:
+        return None
+
+
+def _clear_game(game):
+    st.session_state[f'coupon_{game}'] = ''
+    _save_coupon_file(game, '')
+
+
+def _do_add(ns, by_label):
+    """on_click callback: append the multiselect's picks to the chosen game."""
+    sel = st.session_state.get(f'{ns}_sel', [])
+    game = st.session_state.get(f'{ns}_game') or list(toto.GAMES)[0]
+    n = 0
+    for lab in sel:
+        r = by_label.get(lab)
+        if r:
+            _append_line(game, r['home'], r['away'], r.get('odds'))
+            n += 1
+    st.session_state[f'{ns}_sel'] = []          # clear picks (safe in callback)
+    if n:
+        st.session_state[f'{ns}_added'] = (n, game)
+
+
+def _add_controls(rows, ns):
+    """Multiselect + game picker + Add button for Fixtures / World Cup slates."""
+    if not rows:
+        return
+    by_label = {r['_label']: r for r in rows}
+    st.markdown("**➕ Add to a Toto coupon**")
+    cc = st.columns([4, 1])
+    cc[0].multiselect("Matches", list(by_label), key=f'{ns}_sel',
+                      label_visibility='collapsed',
+                      placeholder="Pick matches to add…")
+    cc[1].radio("Coupon", list(toto.GAMES), key=f'{ns}_game',
+                format_func=lambda g: g.capitalize())
+    st.button("Add selected", key=f'{ns}_add', on_click=_do_add,
+              args=(ns, by_label))
+    added = st.session_state.pop(f'{ns}_added', None)
+    if added:
+        n, g = added
+        st.success(f"Added {n} match(es) to the **{g.capitalize()}** coupon "
+                   f"— see 🎟️ Toto.")
 
 
 # ----------------------------------------------------------------------------
@@ -145,10 +231,14 @@ with tab_match:
             cols[2].metric("xG", f"{pred['xg']['home']:.1f} – "
                                  f"{pred['xg']['away']:.1f}")
 
-        if st.button("➕ Add to Toto coupon"):
-            _add_to_coupon(home_p, away_p, pred)
-            st.success(f"Added **{home_p} v {away_p}** to the Toto coupon — "
-                       "see the 🎟️ tab.")
+        ac = st.columns([2, 1, 3])
+        gm = ac[0].radio("Add to coupon", list(toto.GAMES), horizontal=True,
+                         format_func=lambda g: g.capitalize(), key='match_game')
+        if ac[1].button("➕ Add", key='match_add'):
+            _append_line(gm, home_p, away_p,
+                         (pred.get('market') or {}).get('odds'))
+            st.success(f"Added **{home_p} v {away_p}** to the "
+                       f"{gm.capitalize()} coupon — see 🎟️ Toto.")
 
         with st.expander("Full breakdown"):
             st.text(utils.format_prediction_table(pred))
@@ -162,13 +252,17 @@ with tab_fix:
     if st.button("Load fixtures", type="primary"):
         from scripts import today as today_mod
         with st.spinner("Fetching odds feed and predicting…"):
-            rows = today_mod.club_section(days)
-        if not rows:
+            st.session_state.fix_rows = today_mod.club_section(days)
+
+    frows = st.session_state.get('fix_rows')
+    if frows is not None:
+        if not frows:
             st.info("No club fixtures with odds in this window "
                     "(leagues may be on a break).")
         else:
-            df = pd.DataFrame(rows)
-            for c in ['P(1)', 'P(X)', 'P(2)', 'Conf', 'P(O2.5)', 'P(BTTS)', 'Edge']:
+            df = pd.DataFrame(frows)
+            for c in ['P(1)', 'P(X)', 'P(2)', 'Conf', 'P(O2.5)', 'P(BTTS)',
+                      'Edge']:
                 if c in df.columns:
                     df[c] = (df[c] * 100).round(0)
             st.dataframe(df, use_container_width=True, hide_index=True)
@@ -178,6 +272,13 @@ with tab_fix:
             st.download_button("Download CSV", df.to_csv(index=False),
                                "fixtures.csv")
 
+            add_rows = [{
+                '_label': f"{r['Date']} · {r['Home']} - {r['Away']}",
+                'home': r['Home'], 'away': r['Away'],
+                'odds': _parse_slash_odds(r.get('Odds(1/X/2)')),
+            } for r in frows]
+            _add_controls(add_rows, 'fix')
+
 
 # ============================================================================
 # TAB 3 — World Cup / internationals
@@ -185,23 +286,28 @@ with tab_fix:
 with tab_wc:
     wc_days = st.slider("Days ahead ", 1, 21, 5, key="wcdays")
     if st.button("Load World Cup matches", type="primary"):
+        st.session_state.wc_out = None
+        st.session_state.wc_rows = []
+        st.session_state.wc_msg = None
         try:
             from scripts import international as intl
             if not os.path.exists(intl.WC_FIXTURES_FILE):
-                st.warning("No WC fixtures file. Run: "
-                           "python scripts/international.py update")
+                st.session_state.wc_msg = (
+                    "warning", "No WC fixtures file. Run: "
+                    "python scripts/international.py update")
             else:
                 fx = pd.read_csv(intl.WC_FIXTURES_FILE, parse_dates=['date'])
                 now = pd.Timestamp.now().normalize()
                 fx = fx[(fx['date'] >= now)
                         & (fx['date'] <= now + pd.Timedelta(days=wc_days))]
                 if fx.empty:
-                    st.info("No WC matches in this window.")
+                    st.session_state.wc_msg = ("info",
+                                               "No WC matches in this window.")
                 else:
                     rdf = intl.load_results()
                     ratings, h = intl.run_elo(rdf)
                     model = intl.GoalModel().fit(h)
-                    out = []
+                    out, add_rows = [], []
                     for _, m in fx.sort_values('date').iterrows():
                         hm, aw = m['home_team'], m['away_team']
                         if hm not in ratings or aw not in ratings:
@@ -220,40 +326,52 @@ with tab_wc:
                             'O2.5 %': round(pr['p_over25'] * 100),
                             'BTTS %': round(pr['p_btts'] * 100),
                         })
-                    st.dataframe(pd.DataFrame(out), use_container_width=True,
-                                 hide_index=True)
+                        add_rows.append({
+                            '_label': f"{m['date'].date()} · {hm} - {aw}",
+                            'home': hm, 'away': aw, 'odds': None})
+                    st.session_state.wc_out = out
+                    st.session_state.wc_rows = add_rows
         except Exception as e:
-            st.error(f"World Cup section error: {e}")
+            st.session_state.wc_msg = ("error", f"World Cup section error: {e}")
+
+    msg = st.session_state.get('wc_msg')
+    if msg:
+        getattr(st, msg[0])(msg[1])
+    wc_out = st.session_state.get('wc_out')
+    if wc_out:
+        st.dataframe(pd.DataFrame(wc_out), use_container_width=True,
+                     hide_index=True)
+        _add_controls(st.session_state.get('wc_rows', []), 'wc')
+
 
 # ============================================================================
-# TAB 4 — Toto coupon optimizer
+# TAB 4 — Toto coupon optimizer (two persistent coupons)
 # ============================================================================
 with tab_toto:
-    import numpy as np
-    from scripts import toto
-
-    st.caption("Paste your coupon below — **one match per line**, written "
-               "`Home - Away`. Add odds after if you have them "
-               "(`Home - Away 2.10 3.30 3.40`). No odds → the model fills it in: "
-               "club teams via the league models, national teams (World Cup) via "
-               "the international model. Or push a match in from the 🎯 Match tab.")
+    st.caption("Two persistent coupons — **Turkish** and **German**. They're "
+               "saved to disk, so they survive reloads and new browser tabs "
+               "until you clear them. Paste matches (one `Home - Away` per "
+               "line, optional odds after), or push them in from the other "
+               "tabs. No odds → the model fills it in (club or World Cup).")
     cset = st.columns(3)
     game = cset[0].radio("Game", list(toto.GAMES), horizontal=True,
-                         format_func=lambda g: g.capitalize())
+                         format_func=lambda g: g.capitalize(), key='toto_game')
     n_exp, threshold, top_tier = toto.GAMES[game]
     budget = cset[1].number_input("System budget (columns)", 1, 100000, 1,
                                   help="1 = single column. Higher = cover "
                                        "toss-ups with doubles/triples.")
     cset[2].metric("Coupon", f"{n_exp} matches · prize {threshold}+")
 
-    if 'coupon_text' not in st.session_state:
-        st.session_state.coupon_text = ''
-    st.button("🗑️ Clear", on_click=lambda: st.session_state.update(coupon_text=''))
+    key = f'coupon_{game}'
+    if key not in st.session_state:
+        st.session_state[key] = _load_coupon_file(game)
+    st.button("🗑️ Clear this coupon", on_click=_clear_game, args=(game,))
 
     text = st.text_area(
-        "Matches (one per line)", key='coupon_text', height=320,
+        "Matches (one per line)", key=key, height=320,
         placeholder="Norway - Italy\nTurkey - Spain  1.95 3.40 3.90\n"
                     "Brazil - Morocco\n…")
+    _save_coupon_file(game, st.session_state[key])      # persist edits to disk
 
     parsed = toto.parse_lines(text)
     st.caption(f"Parsed **{len(parsed)}** matches (this game wants {n_exp}).")
