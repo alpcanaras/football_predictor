@@ -241,11 +241,14 @@ class GoalModel:
 # COMMANDS
 # =============================================================================
 def cmd_update(_args):
-    import urllib.request
+    # Use requests (not urllib) — urllib hits SSL: CERTIFICATE_VERIFY_FAILED on
+    # macOS's bundled certs; requests uses the system trust store.
+    import io
+    import requests
     print(f"Downloading {RESULTS_URL} ...")
-    raw = os.path.join('/tmp', 'intl_results_update.csv')
-    urllib.request.urlretrieve(RESULTS_URL, raw)
-    df = pd.read_csv(raw)
+    resp = requests.get(RESULTS_URL, timeout=60)
+    resp.raise_for_status()
+    df = pd.read_csv(io.StringIO(resp.text))
     played = df.dropna(subset=['home_score', 'away_score']).copy()
     played[['home_score', 'away_score']] = played[['home_score', 'away_score']].astype(int)
     played.to_csv(INTL_FILE, index=False)

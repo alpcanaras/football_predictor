@@ -285,7 +285,21 @@ with tab_fix:
 # ============================================================================
 with tab_wc:
     wc_days = st.slider("Days ahead ", 1, 21, 5, key="wcdays")
-    if st.button("Load World Cup matches", type="primary"):
+    wca, wcb = st.columns([1, 1])
+    load_wc = wca.button("Load World Cup matches", type="primary")
+    if wcb.button("🔄 Refresh results + fixtures", key="wc_refresh",
+                  help="Pull the latest international results and upcoming "
+                       "fixtures. Knockout matches only appear here once the "
+                       "group stage finishes and the bracket is set."):
+        from scripts import international as intl_u
+        try:
+            with st.spinner("Downloading latest international results…"):
+                intl_u.cmd_update(None)
+            st.success("Data refreshed — now click **Load World Cup matches**.")
+        except Exception as e:
+            st.error(f"Refresh failed: {e}")
+
+    if load_wc:
         st.session_state.wc_out = None
         st.session_state.wc_rows = []
         st.session_state.wc_msg = None

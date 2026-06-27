@@ -33098,43 +33098,43 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2009-06-28,Panama,Honduras,0,2,Friendly,Cary,United States,True
 2009-06-28,South Africa,Spain,2,3,Confederations Cup,Rustenburg,South Africa,False
 2009-06-28,United States,Brazil,2,3,Confederations Cup,Johannesburg,South Africa,True
-2009-06-28,Åland Islands,Greenland,4,2,Island Games,Mariehamn,Åland Islands,False
-2009-06-28,Shetland,Menorca,2,2,Island Games,Hammarland,Sweden,True
-2009-06-28,Gibraltar,Guernsey,0,0,Island Games,Eckerö,Sweden,True
-2009-06-28,Ynys Môn,Frøya,3,0,Island Games,Jomala,Sweden,True
-2009-06-28,Rhodes,Isle of Wight,2,0,Island Games,Sund,Sweden,True
-2009-06-28,Saare County,Jersey,0,1,Island Games,Saltvik,Sweden,True
-2009-06-28,Western Isles,Gotland,2,1,Island Games,Hammarland,Sweden,True
-2009-06-28,Falkland Islands,Isle of Man,1,2,Island Games,Eckerö,Sweden,True
-2009-06-29,Menorca,Greenland,6,0,Island Games,Sund,Sweden,True
-2009-06-29,Åland Islands,Shetland,2,1,Island Games,Hammarland,Sweden,False
-2009-06-29,Ynys Môn,Guernsey,0,2,Island Games,Jomala,Sweden,True
-2009-06-29,Frøya,Gibraltar,0,8,Island Games,Eckerö,Sweden,True
-2009-06-29,Jersey,Rhodes,1,0,Island Games,Saltvik,Sweden,True
-2009-06-29,Isle of Wight,Saare County,5,1,Island Games,Hammarland,Sweden,True
-2009-06-29,Isle of Man,Western Isles,5,0,Island Games,Finström,Sweden,True
-2009-06-29,Gotland,Falkland Islands,2,0,Island Games,Jomala,Sweden,True
+2009-06-28,Åland Islands,Greenland,4,2,Island Games,Mariehamn,Finland,False
+2009-06-28,Shetland,Menorca,2,2,Island Games,Hammarland,Finland,True
+2009-06-28,Gibraltar,Guernsey,0,0,Island Games,Eckerö,Finland,True
+2009-06-28,Ynys Môn,Frøya,3,0,Island Games,Jomala,Finland,True
+2009-06-28,Rhodes,Isle of Wight,2,0,Island Games,Sund,Finland,True
+2009-06-28,Saare County,Jersey,0,1,Island Games,Saltvik,Finland,True
+2009-06-28,Western Isles,Gotland,2,1,Island Games,Hammarland,Finland,True
+2009-06-28,Falkland Islands,Isle of Man,1,2,Island Games,Eckerö,Finland,True
+2009-06-29,Menorca,Greenland,6,0,Island Games,Sund,Finland,True
+2009-06-29,Åland Islands,Shetland,2,1,Island Games,Hammarland,Finland,False
+2009-06-29,Ynys Môn,Guernsey,0,2,Island Games,Jomala,Finland,True
+2009-06-29,Frøya,Gibraltar,0,8,Island Games,Eckerö,Finland,True
+2009-06-29,Jersey,Rhodes,1,0,Island Games,Saltvik,Finland,True
+2009-06-29,Isle of Wight,Saare County,5,1,Island Games,Hammarland,Finland,True
+2009-06-29,Isle of Man,Western Isles,5,0,Island Games,Finström,Finland,True
+2009-06-29,Gotland,Falkland Islands,2,0,Island Games,Jomala,Finland,True
 2009-06-30,Guatemala,Canada,0,3,Friendly,Oxnard,United States,True
-2009-06-30,Greenland,Shetland,3,1,Island Games,Sund,Sweden,True
-2009-06-30,Åland Islands,Menorca,1,1,Island Games,Finström,Sweden,False
-2009-06-30,Gibraltar,Ynys Môn,1,3,Island Games,Hammarland,Sweden,True
-2009-06-30,Guernsey,Frøya,8,0,Island Games,Jomala,Sweden,True
-2009-06-30,Rhodes,Saare County,3,0,Island Games,Saltvik,Sweden,True
-2009-06-30,Jersey,Isle of Wight,4,1,Island Games,Hammarland,Sweden,True
-2009-06-30,Western Isles,Falkland Islands,7,1,Island Games,Eckerö,Sweden,True
-2009-06-30,Isle of Man,Gotland,4,2,Island Games,Finström,Sweden,True
-2009-07-02,Falkland Islands,Frøya,1,3,Island Games,Jomala,Sweden,True
-2009-07-02,Shetland,Saare County,3,2,Island Games,Hammarland,Sweden,True
-2009-07-02,Gotland,Greenland,4,2,Island Games,Jomala,Sweden,True
-2009-07-02,Åland Islands,Isle of Man,2,1,Island Games,Jomala,Sweden,False
-2009-07-02,Guernsey,Jersey,0,2,Island Games,Sund,Sweden,True
+2009-06-30,Greenland,Shetland,3,1,Island Games,Sund,Finland,True
+2009-06-30,Åland Islands,Menorca,1,1,Island Games,Finström,Finland,False
+2009-06-30,Gibraltar,Ynys Môn,1,3,Island Games,Hammarland,Finland,True
+2009-06-30,Guernsey,Frøya,8,0,Island Games,Jomala,Finland,True
+2009-06-30,Rhodes,Saare County,3,0,Island Games,Saltvik,Finland,True
+2009-06-30,Jersey,Isle of Wight,4,1,Island Games,Hammarland,Finland,True
+2009-06-30,Western Isles,Falkland Islands,7,1,Island Games,Eckerö,Finland,True
+2009-06-30,Isle of Man,Gotland,4,2,Island Games,Finström,Finland,True
+2009-07-02,Falkland Islands,Frøya,1,3,Island Games,Jomala,Finland,True
+2009-07-02,Shetland,Saare County,3,2,Island Games,Hammarland,Finland,True
+2009-07-02,Gotland,Greenland,4,2,Island Games,Jomala,Finland,True
+2009-07-02,Åland Islands,Isle of Man,2,1,Island Games,Jomala,Finland,False
+2009-07-02,Guernsey,Jersey,0,2,Island Games,Sund,Finland,True
 2009-07-03,Canada,Jamaica,1,0,Gold Cup,Carson,United States,True
 2009-07-03,Costa Rica,El Salvador,1,2,Gold Cup,Carson,United States,True
-2009-07-03,Gibraltar,Isle of Wight,3,0,Island Games,Jomala,Sweden,True
-2009-07-03,Menorca,Western Isles,4,1,Island Games,Jomala,Sweden,True
-2009-07-03,Rhodes,Ynys Môn,4,0,Island Games,Eckerö,Sweden,True
-2009-07-03,Isle of Man,Guernsey,0,5,Island Games,Eckerö,Sweden,True
-2009-07-03,Åland Islands,Jersey,1,2,Island Games,Mariehamn,Åland Islands,False
+2009-07-03,Gibraltar,Isle of Wight,3,0,Island Games,Jomala,Finland,True
+2009-07-03,Menorca,Western Isles,4,1,Island Games,Jomala,Finland,True
+2009-07-03,Rhodes,Ynys Môn,4,0,Island Games,Eckerö,Finland,True
+2009-07-03,Isle of Man,Guernsey,0,5,Island Games,Eckerö,Finland,True
+2009-07-03,Åland Islands,Jersey,1,2,Island Games,Mariehamn,Finland,False
 2009-07-04,Honduras,Haiti,1,0,Gold Cup,Seattle,United States,True
 2009-07-04,United States,Grenada,4,0,Gold Cup,Seattle,United States,False
 2009-07-05,Botswana,Iran,1,1,Friendly,Gaborone,Botswana,False
@@ -35240,7 +35240,7 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2011-09-28,Brazil,Argentina,2,0,Superclásico de las Américas,Belém,Brazil,False
 2011-09-30,Antigua and Barbuda,Martinique,1,0,Friendly,Osbourn,Antigua and Barbuda,False
 2011-09-30,Hong Kong,Philippines,3,3,Dragon Cup,Kaohsiung,Taiwan,True
-2011-09-30,Taiwan,Macau,3,0,Dragon Cup,Kaohsiung,Taiwan,True
+2011-09-30,Taiwan,Macau,3,0,Dragon Cup,Kaohsiung,Taiwan,False
 2011-10-01,Ethiopia,Sudan,1,2,Friendly,Addis Ababa,Ethiopia,False
 2011-10-02,Antigua and Barbuda,Martinique,1,2,Friendly,Osbourn,Antigua and Barbuda,False
 2011-10-02,Hong Kong,Macau,5,1,Dragon Cup,Kaohsiung,Taiwan,True
@@ -37665,11 +37665,11 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2014-05-10,Vatican City,Monaco,0,2,Friendly,Rome,Italy,False
 2014-05-10,Palestine,Jordan,1,0,Palestine International Championship,Hebron,Palestine,False
 2014-05-11,Jersey,Guernsey,1,4,Muratti Vase,Jersey,Jersey,False
-2014-05-11,Pakistan,Sri Lanka,3,0,Palestine International Championship,Al-Ram,Palestine,False
+2014-05-11,Pakistan,Sri Lanka,3,0,Palestine International Championship,Al-Ram,Palestine,True
 2014-05-12,Afghanistan,Kyrgyzstan,1,0,Friendly,Kuwait City,Kuwait,True
 2014-05-13,Germany,Poland,0,0,Friendly,Hamburg,Germany,False
 2014-05-14,Kuwait,Afghanistan,3,2,Friendly,Kuwait City,Kuwait,False
-2014-05-14,Jordan,Pakistan,1,0,Palestine International Championship,Nablus,Palestine,False
+2014-05-14,Jordan,Pakistan,1,0,Palestine International Championship,Nablus,Palestine,True
 2014-05-14,Palestine,Sri Lanka,3,0,Palestine International Championship,Nablus,Palestine,False
 2014-05-16,Kuwait,Kyrgyzstan,2,2,Friendly,Kuwait City,Kuwait,False
 2014-05-17,Malawi,Chad,2,0,African Cup of Nations qualification,Blantyre,Malawi,False
@@ -37678,7 +37678,7 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2014-05-17,Netherlands,Ecuador,1,1,Friendly,Amsterdam,Netherlands,False
 2014-05-17,São Tomé and Príncipe,Benin,0,2,African Cup of Nations qualification,São Tomé,São Tomé and Príncipe,False
 2014-05-17,Somaliland,Sealand,2,2,Friendly,London,England,True
-2014-05-17,Sri Lanka,Jordan,0,4,Palestine International Championship,Al-Ram,Palestine,False
+2014-05-17,Sri Lanka,Jordan,0,4,Palestine International Championship,Al-Ram,Palestine,True
 2014-05-17,Palestine,Pakistan,3,0,Palestine International Championship,Al-Ram,Palestine,False
 2014-05-18,Belarus,Iran,0,0,Friendly,Kapfenberg,Austria,True
 2014-05-18,Burundi,Botswana,0,0,African Cup of Nations qualification,Bujumbura,Burundi,False
@@ -45124,6 +45124,7 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2022-03-30,Panama,Canada,1,0,FIFA World Cup qualification,Panama City,Panama,False
 2022-03-30,Jamaica,Honduras,2,1,FIFA World Cup qualification,Kingston,Jamaica,False
 2022-03-30,Solomon Islands,New Zealand,0,5,FIFA World Cup qualification,Doha,Qatar,True
+2022-04-22,Elba Island,Vatican City,4,2,Friendly,Capoliveri,Italy,False
 2022-04-23,Alderney,Guernsey,0,2,Muratti Vase,Alderney,Alderney,False
 2022-04-24,El Salvador,Guatemala,0,4,Friendly,San Jose,United States,True
 2022-04-27,Mexico,Guatemala,0,0,Friendly,Orlando,United States,True
@@ -48156,7 +48157,7 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2025-03-20,Mozambique,Uganda,3,1,FIFA World Cup qualification,Cairo,Egypt,True
 2025-03-20,Malawi,Namibia,0,1,FIFA World Cup qualification,Lilongwe,Malawi,False
 2025-03-20,Comoros,Mali,0,3,FIFA World Cup qualification,Berkane,Morocco,True
-2025-03-20,Lebanon,Timor-Leste,4,0,Friendly,Al Khor,Qatar,False
+2025-03-20,Lebanon,Timor-Leste,4,0,Friendly,Al Khor,Qatar,True
 2025-03-21,Belize,Costa Rica,0,7,Gold Cup qualification,Belmopan,Belize,False
 2025-03-21,Guyana,Guatemala,3,2,Gold Cup qualification,Wildey,Barbados,True
 2025-03-21,Bermuda,Honduras,3,5,Gold Cup qualification,Hamilton,Bermuda,False
@@ -49364,7 +49365,7 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2026-06-06,Myanmar,Guam,6,1,Tri-Nations Cup,Manila,Philippines,True
 2026-06-06,Lithuania,Latvia,1,1,Baltic Cup,Kaunas,Lithuania,False
 2026-06-06,Estonia,Faroe Islands,1,0,Baltic Cup,Pärnu,Estonia,False
-2026-06-07,Afghanistan,Pakistan,0,2,Diamond Jubilee International Football Tournament,Malé,Maldives,False
+2026-06-07,Afghanistan,Pakistan,0,2,Diamond Jubilee International Football Tournament,Malé,Maldives,True
 2026-06-07,Croatia,Slovenia,2,1,Friendly,Varaždin,Croatia,False
 2026-06-07,Ecuador,Guatemala,3,0,Friendly,Columbus,United States,True
 2026-06-07,Greece,Italy,0,1,Friendly,Heraklion,Greece,False
@@ -49399,3 +49400,67 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2026-06-09,Togo,Benin,5,1,Friendly,Lomé,Togo,False
 2026-06-09,Liberia,Sierra Leone,3,1,Friendly,Monrovia,Liberia,False
 2026-06-09,Iraq,Venezuela,0,2,Friendly,Bridgeview,United States,True
+2026-06-10,Bolivia,Algeria,0,4,Friendly,Kansas City,United States,True
+2026-06-10,England,Costa Rica,3,0,Friendly,Orlando,United States,True
+2026-06-10,Portugal,Nigeria,2,1,Friendly,Leiria,Portugal,False
+2026-06-10,Afghanistan,Pakistan,0,2,Diamond Jubilee International Football Tournament,Malé,Maldives,True
+2026-06-11,Mexico,South Africa,2,0,FIFA World Cup,Mexico City,Mexico,False
+2026-06-11,South Korea,Czech Republic,2,1,FIFA World Cup,Zapopan,Mexico,True
+2026-06-12,Canada,Bosnia and Herzegovina,1,1,FIFA World Cup,Toronto,Canada,False
+2026-06-12,United States,Paraguay,4,1,FIFA World Cup,Inglewood,United States,False
+2026-06-13,Qatar,Switzerland,1,1,FIFA World Cup,Santa Clara,United States,True
+2026-06-13,Brazil,Morocco,1,1,FIFA World Cup,East Rutherford,United States,True
+2026-06-13,Haiti,Scotland,0,1,FIFA World Cup,Foxborough,United States,True
+2026-06-13,Australia,Turkey,2,0,FIFA World Cup,Vancouver,Canada,True
+2026-06-14,Germany,Curaçao,7,1,FIFA World Cup,Houston,United States,True
+2026-06-14,Ivory Coast,Ecuador,1,0,FIFA World Cup,Philadelphia,United States,True
+2026-06-14,Netherlands,Japan,2,2,FIFA World Cup,Arlington,United States,True
+2026-06-14,Sweden,Tunisia,5,1,FIFA World Cup,Guadalupe,Mexico,True
+2026-06-15,Belgium,Egypt,1,1,FIFA World Cup,Seattle,United States,True
+2026-06-15,Iran,New Zealand,2,2,FIFA World Cup,Inglewood,United States,True
+2026-06-15,Spain,Cape Verde,0,0,FIFA World Cup,Atlanta,United States,True
+2026-06-15,Saudi Arabia,Uruguay,1,1,FIFA World Cup,Miami Gardens,United States,True
+2026-06-16,France,Senegal,3,1,FIFA World Cup,East Rutherford,United States,True
+2026-06-16,Iraq,Norway,1,4,FIFA World Cup,Foxborough,United States,True
+2026-06-16,Argentina,Algeria,3,0,FIFA World Cup,Kansas City,United States,True
+2026-06-16,Austria,Jordan,3,1,FIFA World Cup,Santa Clara,United States,True
+2026-06-17,Portugal,DR Congo,1,1,FIFA World Cup,Houston,United States,True
+2026-06-17,Uzbekistan,Colombia,1,3,FIFA World Cup,Mexico City,Mexico,True
+2026-06-17,England,Croatia,4,2,FIFA World Cup,Arlington,United States,True
+2026-06-17,Ghana,Panama,1,0,FIFA World Cup,Toronto,Canada,True
+2026-06-18,Czech Republic,South Africa,1,1,FIFA World Cup,Atlanta,United States,True
+2026-06-18,Mexico,South Korea,1,0,FIFA World Cup,Zapopan,Mexico,False
+2026-06-18,Switzerland,Bosnia and Herzegovina,4,1,FIFA World Cup,Inglewood,United States,True
+2026-06-18,Canada,Qatar,6,0,FIFA World Cup,Vancouver,Canada,False
+2026-06-19,Scotland,Morocco,0,1,FIFA World Cup,Foxborough,United States,True
+2026-06-19,Brazil,Haiti,3,0,FIFA World Cup,Philadelphia,United States,True
+2026-06-19,United States,Australia,2,0,FIFA World Cup,Seattle,United States,False
+2026-06-19,Turkey,Paraguay,0,1,FIFA World Cup,Santa Clara,United States,True
+2026-06-20,Germany,Ivory Coast,2,1,FIFA World Cup,Toronto,Canada,True
+2026-06-20,Ecuador,Curaçao,0,0,FIFA World Cup,Kansas City,United States,True
+2026-06-20,Netherlands,Sweden,5,1,FIFA World Cup,Houston,United States,True
+2026-06-20,Tunisia,Japan,0,4,FIFA World Cup,Guadalupe,Mexico,True
+2026-06-21,Belgium,Iran,0,0,FIFA World Cup,Inglewood,United States,True
+2026-06-21,New Zealand,Egypt,1,3,FIFA World Cup,Vancouver,Canada,True
+2026-06-21,Spain,Saudi Arabia,4,0,FIFA World Cup,Atlanta,United States,True
+2026-06-21,Uruguay,Cape Verde,2,2,FIFA World Cup,Miami Gardens,United States,True
+2026-06-22,France,Iraq,3,0,FIFA World Cup,Philadelphia,United States,True
+2026-06-22,Norway,Senegal,3,2,FIFA World Cup,East Rutherford,United States,True
+2026-06-22,Argentina,Austria,2,0,FIFA World Cup,Arlington,United States,True
+2026-06-22,Jordan,Algeria,1,2,FIFA World Cup,Santa Clara,United States,True
+2026-06-23,Portugal,Uzbekistan,5,0,FIFA World Cup,Houston,United States,True
+2026-06-23,Colombia,DR Congo,1,0,FIFA World Cup,Zapopan,Mexico,True
+2026-06-23,England,Ghana,0,0,FIFA World Cup,Foxborough,United States,True
+2026-06-23,Panama,Croatia,0,1,FIFA World Cup,Toronto,Canada,True
+2026-06-24,Mexico,Czech Republic,3,0,FIFA World Cup,Mexico City,Mexico,False
+2026-06-24,South Africa,South Korea,1,0,FIFA World Cup,Guadalupe,Mexico,True
+2026-06-24,Canada,Switzerland,1,2,FIFA World Cup,Vancouver,Canada,False
+2026-06-24,Bosnia and Herzegovina,Qatar,3,1,FIFA World Cup,Seattle,United States,True
+2026-06-24,Scotland,Brazil,0,3,FIFA World Cup,Miami Gardens,United States,True
+2026-06-24,Morocco,Haiti,4,2,FIFA World Cup,Atlanta,United States,True
+2026-06-25,United States,Turkey,2,3,FIFA World Cup,Inglewood,United States,False
+2026-06-25,Paraguay,Australia,0,0,FIFA World Cup,Santa Clara,United States,True
+2026-06-25,Curaçao,Ivory Coast,0,2,FIFA World Cup,Philadelphia,United States,True
+2026-06-25,Ecuador,Germany,2,1,FIFA World Cup,East Rutherford,United States,True
+2026-06-25,Japan,Sweden,1,1,FIFA World Cup,Arlington,United States,True
+2026-06-25,Tunisia,Netherlands,1,3,FIFA World Cup,Kansas City,United States,True
