@@ -91,14 +91,75 @@ def _fmt_line(home, away, odds=None):
     return line
 
 
+def _pair(home, away):
+    """Order-insensitive, accent-folded match identity (for duplicate checks)."""
+    return frozenset((toto._fold(home), toto._fold(away)))
+
+
+def _coupon_pairs(text):
+    return {_pair(r['home'], r['away'])
+            for _, r in toto.parse_lines(text).iterrows()}
+
+
 def _append_line(game, home, away, odds=None):
-    """Append a match to a game's coupon. Disk is the source of truth, so this
-    is safe even if Streamlit dropped the inactive coupon's widget state."""
+    """Append a match to a game's coupon (skipping duplicates). Disk is the
+    source of truth, so this is safe even if Streamlit dropped the inactive
+    coupon's widget state. Returns 'added' or 'dup'."""
     cur = _load_coupon_file(game).rstrip()
+    if _pair(home, away) in _coupon_pairs(cur):
+        return 'dup'
     new = (cur + '\n' + _fmt_line(home, away, odds)) if cur \
         else _fmt_line(home, away, odds)
     _save_coupon_file(game, new)
     st.session_state[f'coupon_{game}'] = new
+    return 'added'
+
+
+def _dedup_coupon(game):
+    """on_click callback: drop repeated matches (keep first occurrence)."""
+    key = f'coupon_{game}'
+    seen, out = set(), []
+    for raw in st.session_state.get(key, '').splitlines():
+        df = toto.parse_lines(raw)
+        if df.empty:
+            continue
+        r = df.iloc[0]
+        p = _pair(r['home'], r['away'])
+        if p in seen:
+            continue
+        seen.add(p)
+        out.append(raw)
+    new = '\n'.join(out)
+    st.session_state[key] = new
+    _save_coupon_file(game, new)
+
+
+def _quick_add():
+    """on_click callback for the Toto tab's quick-add row."""
+    game = st.session_state.get('toto_game') or list(toto.GAMES)[0]
+    h = st.session_state.get('qa_home')
+    a = st.session_state.get('qa_away')
+    if not h or not a or h == a:
+        st.session_state['qa_msg'] = ('warning', 'Pick two different teams.')
+        return
+    odds = None
+    parts = (st.session_state.get('qa_odds') or '').replace(',', '.').split()
+    if len(parts) == 3:
+        try:
+            v = [float(x) for x in parts]
+            odds = {'home': v[0], 'draw': v[1], 'away': v[2]}
+        except ValueError:
+            pass
+    status = _append_line(game, h, a, odds)
+    st.session_state['qa_home'] = None
+    st.session_state['qa_away'] = None
+    st.session_state['qa_odds'] = ''
+    if status == 'added':
+        st.session_state['qa_msg'] = (
+            'success', f'Added **{h} - {a}** to the {game.capitalize()} coupon.')
+    else:
+        st.session_state['qa_msg'] = (
+            'info', f'**{h} - {a}** is already in the {game.capitalize()} coupon.')
 
 
 def _parse_slash_odds(s):
@@ -113,6 +174,7 @@ def _parse_slash_odds(s):
 
 def _clear_game(game):
     st.session_state[f'coupon_{game}'] = ''
+    st.session_state.pop(f'toto_res_{game}', None)
     _save_coupon_file(game, '')
 
 
@@ -120,15 +182,18 @@ def _do_add(ns, by_label):
     """on_click callback: append the multiselect's picks to the chosen game."""
     sel = st.session_state.get(f'{ns}_sel', [])
     game = st.session_state.get(f'{ns}_game') or list(toto.GAMES)[0]
-    n = 0
+    n = dups = 0
     for lab in sel:
         r = by_label.get(lab)
-        if r:
-            _append_line(game, r['home'], r['away'], r.get('odds'))
+        if not r:
+            continue
+        if _append_line(game, r['home'], r['away'], r.get('odds')) == 'added':
             n += 1
+        else:
+            dups += 1
     st.session_state[f'{ns}_sel'] = []          # clear picks (safe in callback)
-    if n:
-        st.session_state[f'{ns}_added'] = (n, game)
+    if n or dups:
+        st.session_state[f'{ns}_added'] = (n, dups, game)
 
 
 def _add_controls(rows, ns):
@@ -147,13 +212,70 @@ def _add_controls(rows, ns):
               args=(ns, by_label))
     added = st.session_state.pop(f'{ns}_added', None)
     if added:
-        n, g = added
-        st.success(f"Added {n} match(es) to the **{g.capitalize()}** coupon "
-                   f"— see 🎟️ Toto.")
+        n, dups, g = added
+        msg = f"Added {n} match(es) to the **{g.capitalize()}** coupon — see 🎟️ Toto."
+        if dups:
+            msg += f" Skipped {dups} already in it."
+        st.success(msg)
 
 
 # ----------------------------------------------------------------------------
 hist, team_stats, team_to_league, leagues, teams_by_league = load_everything()
+
+
+@st.cache_resource(show_spinner=False)
+def known_teams():
+    """Every selectable team: clubs from the trained leagues + national sides."""
+    intl_names = sorted(toto._load_intl()['ratings'])
+    return sorted(set(team_to_league) | set(intl_names))
+
+
+# ----------------------------------------------------------------------------
+# Sidebar — data freshness + one-click refresh from the internet
+# ----------------------------------------------------------------------------
+with st.sidebar:
+    st.markdown("### 📡 Data")
+    st.caption(f"Club results through **{hist['Date'].max().date()}**")
+    try:
+        from scripts import international as _intl_mod
+        _age_h = (dt.datetime.now().timestamp()
+                  - os.path.getmtime(_intl_mod.INTL_FILE)) / 3600
+        st.caption(f"Internationals updated **{_age_h:.0f}h ago**")
+    except OSError:
+        pass
+
+    if st.button("🔄 Update league data", key="sb_leagues",
+                 help="Download the latest results CSVs for all 28 leagues "
+                      "from football-data.co.uk, rebuild features and reload "
+                      "the app with fresh data (~2–3 min)."):
+        import subprocess
+        _fetch = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              'scripts', 'fetch_latest.py')
+        with st.spinner("Downloading CSVs + rebuilding features… (~2–3 min)"):
+            proc = subprocess.run([sys.executable, _fetch,
+                                   '--apply', '--refresh-processed'],
+                                  capture_output=True, text=True)
+        if proc.returncode in (0, 3):        # 3 = some leagues failed (offseason)
+            st.toast("League data updated ✅ — reloading")
+            load_everything.clear()
+            known_teams.clear()
+            st.rerun()
+        else:
+            st.error("Update failed")
+            st.code((proc.stdout or '')[-1200:] + '\n'
+                    + (proc.stderr or '')[-600:])
+
+    if st.button("🔄 Update internationals / WC", key="sb_intl",
+                 help="Pull the latest national-team results + upcoming "
+                      "fixtures (same as the World Cup tab's refresh)."):
+        from scripts import international as _intl_mod
+        try:
+            with st.spinner("Downloading latest international results…"):
+                _intl_mod.cmd_update(None)
+            st.success("Internationals refreshed.")
+        except Exception as e:
+            st.error(f"Refresh failed: {e}")
+
 
 st.title("⚽ Football Predictor")
 tab_match, tab_fix, tab_wc, tab_toto = st.tabs(
@@ -235,10 +357,13 @@ with tab_match:
         gm = ac[0].radio("Add to coupon", list(toto.GAMES), horizontal=True,
                          format_func=lambda g: g.capitalize(), key='match_game')
         if ac[1].button("➕ Add", key='match_add'):
-            _append_line(gm, home_p, away_p,
-                         (pred.get('market') or {}).get('odds'))
-            st.success(f"Added **{home_p} v {away_p}** to the "
-                       f"{gm.capitalize()} coupon — see 🎟️ Toto.")
+            if _append_line(gm, home_p, away_p,
+                            (pred.get('market') or {}).get('odds')) == 'added':
+                st.success(f"Added **{home_p} v {away_p}** to the "
+                           f"{gm.capitalize()} coupon — see 🎟️ Toto.")
+            else:
+                st.info(f"**{home_p} v {away_p}** is already in the "
+                        f"{gm.capitalize()} coupon.")
 
         with st.expander("Full breakdown"):
             st.text(utils.format_prediction_table(pred))
@@ -362,11 +487,13 @@ with tab_wc:
 # TAB 4 — Toto coupon optimizer (two persistent coupons)
 # ============================================================================
 with tab_toto:
-    st.caption("Two persistent coupons — **Turkish** and **German**. They're "
-               "saved to disk, so they survive reloads and new browser tabs "
-               "until you clear them. Paste matches (one `Home - Away` per "
-               "line, optional odds after), or push them in from the other "
-               "tabs. No odds → the model fills it in (club or World Cup).")
+    st.caption("Two persistent coupons — **Turkish** and **German** — saved to "
+               "disk until you clear them. Build the coupon three ways: "
+               "**quick-add** below (search any club or national team), "
+               "**paste** lines into the box (`Home - Away`, optional odds "
+               "after), or **push** matches from the other tabs. No odds → the "
+               "model prices it (club or World Cup). Duplicates are caught "
+               "automatically.")
     cset = st.columns(3)
     game = cset[0].radio("Game", list(toto.GAMES), horizontal=True,
                          format_func=lambda g: g.capitalize(), key='toto_game')
@@ -379,7 +506,19 @@ with tab_toto:
     key = f'coupon_{game}'
     if key not in st.session_state:
         st.session_state[key] = _load_coupon_file(game)
-    st.button("🗑️ Clear this coupon", on_click=_clear_game, args=(game,))
+
+    # --- quick add: searchable over every club + national team ---------------
+    qa = st.columns([3, 3, 2, 1])
+    qa[0].selectbox("Home", known_teams(), index=None, key='qa_home',
+                    placeholder="Home team…", label_visibility='collapsed')
+    qa[1].selectbox("Away", known_teams(), index=None, key='qa_away',
+                    placeholder="Away team…", label_visibility='collapsed')
+    qa[2].text_input("Odds", key='qa_odds', label_visibility='collapsed',
+                     placeholder="odds 1 X 2 (optional)")
+    qa[3].button("➕ Add", key='qa_btn', on_click=_quick_add)
+    qmsg = st.session_state.pop('qa_msg', None)
+    if qmsg:
+        getattr(st, qmsg[0])(qmsg[1])
 
     text = st.text_area(
         "Matches (one per line)", key=key, height=320,
@@ -388,11 +527,45 @@ with tab_toto:
     _save_coupon_file(game, st.session_state[key])      # persist edits to disk
 
     parsed = toto.parse_lines(text)
-    st.caption(f"Parsed **{len(parsed)}** matches (this game wants {n_exp}).")
 
-    if st.button("Analyze coupon", type="primary"):
+    # --- live validation: count, duplicates, unrecognized names --------------
+    n_par = len(parsed)
+    tick = '✅' if n_par == n_exp else ('⚠️' if n_par > n_exp else '✏️')
+    st.caption(f"{tick} **{n_par}** matches on the coupon "
+               f"(this game wants {n_exp}).")
+    if not parsed.empty:
+        dups, unknown, seen = [], [], set()
+        ic = toto._load_intl()
+        club = set(team_to_league)
+        for _, r in parsed.iterrows():
+            p_id = _pair(r['home'], r['away'])
+            if p_id in seen:
+                dups.append(f"{r['home']} - {r['away']}")
+            seen.add(p_id)
+            if all(pd.notna(r.get(c)) for c in ('o1', 'ox', 'o2')):
+                continue                         # odds present -> always priced
+            if toto._fuzzy(r['home'], club) and toto._fuzzy(r['away'], club):
+                continue
+            if toto._intl_name(r['home'], ic) and toto._intl_name(r['away'], ic):
+                continue
+            unknown.append(f"{r['home']} - {r['away']}")
+        if dups:
+            dc1, dc2 = st.columns([4, 1])
+            dc1.warning("Duplicate matches: " + " · ".join(dups))
+            dc2.button("🧹 Remove duplicates", on_click=_dedup_coupon,
+                       args=(game,))
+        if unknown:
+            st.warning("Not recognized (will default to 1/3 unless you add "
+                       "odds): " + " · ".join(unknown))
+
+    ca1, ca2 = st.columns([1, 1])
+    analyze = ca1.button("Analyze coupon", type="primary")
+    ca2.button("🗑️ Clear this coupon", on_click=_clear_game, args=(game,))
+
+    if analyze:
         if parsed.empty:
-            st.info("Paste some matches first — one `Home - Away` per line.")
+            st.info("Add some matches first — quick-add above, paste, or push "
+                    "from the other tabs.")
         else:
             ctx = {'hist': hist, 'team_stats': team_stats,
                    'team_to_league': team_to_league,
@@ -419,40 +592,51 @@ with tab_toto:
                             if p[order[0]] > 0 else None,
                             'Src': src, 'Note': flag})
                 sorted_probs.append(np.sort(p)[::-1])
+            st.session_state[f'toto_res_{game}'] = {
+                'text': text, 'out': out, 'sorted_probs': sorted_probs,
+                'unmatched': unmatched}
 
-            st.dataframe(pd.DataFrame(out), use_container_width=True,
-                         hide_index=True)
-            st.caption("Fair = fair decimal odds for the pick (1 ÷ probability) "
-                       "— bet it only if a book pays more. Src: **blend** "
-                       "(odds+model) · **odds** · **model** (club) · **intl** "
-                       "(World Cup model) · **no data** (defaulted to 1∕3 each).")
-            if unmatched:
-                st.warning("Couldn't match — defaulted to 1/3 each. Check the "
-                           "spelling, or add odds (`… 2.10 3.30 3.40`):\n\n- "
-                           + "\n- ".join(unmatched))
+    # --- results persist across reruns; system section follows the budget ----
+    res = st.session_state.get(f'toto_res_{game}')
+    if res:
+        if res['text'].strip() != text.strip():
+            st.info("✏️ The coupon changed since this analysis — hit "
+                    "**Analyze coupon** to refresh.")
+        out, sorted_probs = res['out'], res['sorted_probs']
 
-            q_single = [sp[0] for sp in sorted_probs]
-            d = toto.pb_distribution(q_single)
-            st.markdown(f"**Single column** — expected correct ≈ "
-                        f"{sum(q_single):.1f}/{len(parsed)}")
-            tiers = st.columns(min(4, top_tier - threshold + 1))
-            for k, t in enumerate(range(threshold, top_tier + 1)):
-                if t < len(d) and k < len(tiers):
-                    tiers[k].metric(f"P(≥{t})", f"{d[t:].sum():.1%}")
+        st.dataframe(pd.DataFrame(out), use_container_width=True,
+                     hide_index=True)
+        st.caption("Fair = fair decimal odds for the pick (1 ÷ probability) "
+                   "— bet it only if a book pays more. Src: **blend** "
+                   "(odds+model) · **odds** · **model** (club) · **intl** "
+                   "(World Cup model) · **no data** (defaulted to 1∕3 each).")
+        if res['unmatched']:
+            st.warning("Couldn't match — defaulted to 1/3 each. Check the "
+                       "spelling, or add odds (`… 2.10 3.30 3.40`):\n\n- "
+                       + "\n- ".join(res['unmatched']))
 
-            if budget > 1:
-                cov, cols, p_thr = toto.optimize_system(
-                    sorted_probs, threshold, int(budget))
-                st.markdown(f"**Best system in {budget} columns** — uses "
-                            f"{cols} columns; **P(≥{threshold}) = {p_thr:.1%}** "
-                            f"(vs {d[threshold:].sum():.1%} single)")
-                ups = [(i, cov[i]) for i in range(len(cov)) if cov[i] > 1]
-                if ups:
-                    st.markdown("Cover these least-predictable matches:")
-                    for i, c in ups:
-                        kind = "**TRIPLE** (play 1, X and 2)" if c == 3 \
-                            else "**double** (top 2 outcomes)"
-                        st.markdown(f"- {out[i]['Match']} → {kind}")
+        q_single = [sp[0] for sp in sorted_probs]
+        d = toto.pb_distribution(q_single)
+        st.markdown(f"**Single column** — expected correct ≈ "
+                    f"{sum(q_single):.1f}/{len(out)}")
+        tiers = st.columns(min(4, top_tier - threshold + 1))
+        for k, t in enumerate(range(threshold, top_tier + 1)):
+            if t < len(d) and k < len(tiers):
+                tiers[k].metric(f"P(≥{t})", f"{d[t:].sum():.1%}")
+
+        if budget > 1:
+            cov, cols, p_thr = toto.optimize_system(
+                sorted_probs, threshold, int(budget))
+            st.markdown(f"**Best system in {budget} columns** — uses "
+                        f"{cols} columns; **P(≥{threshold}) = {p_thr:.1%}** "
+                        f"(vs {d[threshold:].sum():.1%} single)")
+            ups = [(i, cov[i]) for i in range(len(cov)) if cov[i] > 1]
+            if ups:
+                st.markdown("Cover these least-predictable matches:")
+                for i, c in ups:
+                    kind = "**TRIPLE** (play 1, X and 2)" if c == 3 \
+                        else "**double** (top 2 outcomes)"
+                    st.markdown(f"- {out[i]['Match']} → {kind}")
 
 
 st.caption(f"Loaded {len(team_to_league)} teams · {len(leagues)} leagues · "
