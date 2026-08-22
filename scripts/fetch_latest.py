@@ -108,17 +108,66 @@ def _csv_stats(path: str) -> dict:
     return {'rows': len(rows), 'last_date': last}
 
 
-def _download(url: str, dest: str, timeout: int) -> tuple[bool, str, int]:
+def _expected_marker(league: str) -> tuple[str, str]:
+    """What the payload must contain to be the file we asked for.
+
+    Rich leagues carry a ``Div`` column holding the division code from the URL
+    (E0, D1, ...). The cumulative "new" files carry a ``Country`` column.
+    """
+    src = config.FETCH_SOURCES[league]
+    code = os.path.basename(src['url']).replace('.csv', '')
+    if config.LEAGUE_REGISTRY.get(league, {}).get('type') == 'rich':
+        return 'Div', code
+    return 'Country', config.SPARSE_COUNTRY.get(league, '')
+
+
+def _validate_payload(body: bytes, league: str) -> Optional[str]:
+    """Return an error string if the CSV is not the league we requested.
+
+    football-data.co.uk runs Apache with MultiViews: when a file does not
+    exist yet (a new season not published), the server may serve a *similar*
+    file with HTTP 200 — e.g. EC.csv in answer to E0.csv. Without this check
+    that lands English Conference matches in the Premier League folder.
+    """
+    try:
+        text = body.decode('utf-8-sig', errors='replace')
+    except Exception:
+        return 'undecodable'
+    rows = list(csv.reader(io.StringIO(text)))
+    if len(rows) < 2:
+        return 'empty-csv'
+    header = [h.strip().lstrip('﻿') for h in rows[0]]
+    col, expected = _expected_marker(league)
+    if not expected or col not in header:
+        return None                       # nothing to check against
+    idx = header.index(col)
+    seen = {r[idx].strip() for r in rows[1:] if len(r) > idx and r[idx].strip()}
+    if not seen:
+        return None
+    if not any(v.casefold() == expected.casefold() for v in seen):
+        return f'wrong-{col.lower()}:{sorted(seen)[:2]}'
+    return None
+
+
+def _download(url: str, dest: str, timeout: int,
+              league: Optional[str] = None) -> tuple[bool, str, int]:
     try:
         resp = requests.get(url, timeout=timeout,
                             headers={'User-Agent': 'football-predictor/1.0'})
     except Exception as e:
         return False, f'{type(e).__name__}: {e}', 0
+    if resp.status_code == 300:
+        # Apache content negotiation: the requested file does not exist.
+        return False, 'not-published', resp.status_code
     if resp.status_code != 200:
         return False, f'HTTP {resp.status_code}', resp.status_code
     body = resp.content
     if len(body) < 200 or b'HomeTeam' not in body and b'Home,Away' not in body and b'Home' not in body.split(b'\n', 1)[0]:
         return False, 'payload-not-csv', resp.status_code
+    if league is not None:
+        err = _validate_payload(body, league)
+        if err:
+            return False, err, resp.status_code
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(dest, 'wb') as f:
         f.write(body)
@@ -219,7 +268,9 @@ def main() -> int:
             })
             continue
 
-        ok, status, http = _download(url, staged_path, args.timeout)
+        ok, status, http = _download(url, staged_path, args.timeout, league=lg)
+        if not ok and os.path.isfile(staged_path):
+            os.remove(staged_path)          # never promote a rejected payload
         size = os.path.getsize(staged_path) if os.path.isfile(staged_path) else 0
         stats = _csv_stats(staged_path) if ok else {'rows': 0, 'last_date': None}
         results.append({

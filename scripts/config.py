@@ -91,6 +91,28 @@ FETCH_SOURCES = {
 }
 
 
+# Country value expected in each sparse league's cumulative "new" file. Used by
+# fetch_latest.py to verify a download is really the league we asked for:
+# football-data.co.uk serves a *similar* file (HTTP 200) when the requested one
+# is missing, and e.g. SWE.csv (Sweden) vs SWZ.csv (Switzerland) is one typo
+# away from silently poisoning a league.
+SPARSE_COUNTRY = {
+    'argentina': 'Argentina',
+    'BRAZIL':    'Brazil',
+    'CH':        'Switzerland',
+    'DANSK':     'Denmark',
+    'chn':       'China',
+    'fin':       'Finland',
+    'japan':     'Japan',
+    'norsk':     'Norway',
+    'irish':     'Ireland',
+    'mexico':    'Mexico',
+    'russian':   'Russia',
+    'swedish':   'Sweden',
+    'usa':       'USA',
+}
+
+
 # =============================================================================
 # COLUMN MAPPING (sparse format -> standard)
 # =============================================================================
