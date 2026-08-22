@@ -236,6 +236,17 @@ def known_teams():
 STALE_DAYS = 28
 
 
+@st.cache_resource(show_spinner=False)
+def modelled_leagues():
+    """Leagues that actually have trained models behind them. A league can be
+    in the data (so it appears in the dropdowns) while its models have not been
+    trained yet — without this the app just returns nothing and says nothing."""
+    try:
+        return set(utils.get_available_leagues())
+    except Exception:
+        return set(leagues)
+
+
 @st.cache_data(show_spinner=False)
 def league_freshness():
     """Days since each league's last result — a prediction is only as current
@@ -359,6 +370,12 @@ with tab_match:
     away = c3.selectbox("Away team", opts,
                         index=1 if len(opts) > 1 else 0, key="away")
 
+    if lg not in modelled_leagues():
+        st.info(f"**{disp(lg)}** has match data but no trained models yet, so "
+                "predictions for it will come back empty. Train it with "
+                f"`python scripts/train_one.py --league {lg} --engine xgb` "
+                "(then `--engine lgbm`).")
+
     if st.button("Predict", type="primary") and home != away:
         try:
             pred = predict_mod.predict_match(
@@ -384,6 +401,11 @@ with tab_match:
             st.warning(_sn)
 
         p = pred.get('1x2', {})
+        if not p:
+            st.error(
+                f"No 1X2 model produced a result for **{disp(pred.get('league') or lg)}**. "
+                "The league's models are missing or failed to load — see the "
+                "note above, or run `python scripts/selftest.py` to check.")
         if p:
             # Stats-first table: probability, bookmaker odds, implied %, edge
             mkt = pred.get('market')

@@ -75,6 +75,55 @@ def build_url(template: str, season: str) -> str:
     return template.replace('{season}', season)
 
 
+def past_seasons(n: int, today: Optional[dt.date] = None) -> list[str]:
+    """The n season codes ending with the current one: ['2021', '2122', ...]."""
+    cur = current_season_code(today)
+    start = int(cur[:2])
+    out = []
+    for back in range(n - 1, -1, -1):
+        s = (start - back) % 100
+        out.append(f'{s:02d}{(s + 1) % 100:02d}')
+    return out
+
+
+def backfill(leagues: list[str], seasons: list[str], timeout: int) -> int:
+    """Download several past seasons of the per-season (rich) leagues.
+
+    Used when adding a league: the daily fetcher only ever pulls the current
+    season, so a new league would otherwise start with no history to train on.
+    Files land in data/<league>/<code>_<season>.csv alongside existing ones.
+    """
+    written = 0
+    print(f"  Backfilling {len(leagues)} league(s) x {len(seasons)} season(s)")
+    for lg in leagues:
+        src = config.FETCH_SOURCES.get(lg)
+        if not src or '{season}' not in src['url']:
+            print(f"    {lg:20} skip (no per-season URL)")
+            continue
+        code = os.path.basename(src['url']).replace('.csv', '')
+        current = current_season_code()
+        for season in seasons:
+            # The current season belongs in the daily fetcher's target file, so
+            # tomorrow's fetch updates it in place instead of adding a twin.
+            name = src['target'] if season == current else f'{code}_{season}.csv'
+            dest = os.path.join(config.DATA_DIR, lg, name)
+            if os.path.isfile(dest):
+                print(f"    {lg:20} {season}  already have it")
+                continue
+            ok, status, _ = _download(build_url(src['url'], season), dest,
+                                      timeout, league=lg)
+            if ok:
+                written += 1
+                stats = _csv_stats(dest)
+                print(f"    {lg:20} {season}  {stats['rows']:>4} rows "
+                      f"-> {os.path.basename(dest)}")
+            else:
+                if os.path.isfile(dest):
+                    os.remove(dest)
+                print(f"    {lg:20} {season}  {status}")
+    return written
+
+
 # -----------------------------------------------------------------------------
 # Fetch + stage
 # -----------------------------------------------------------------------------
@@ -229,6 +278,10 @@ def main() -> int:
                         help='Per-file HTTP timeout in seconds (default 30)')
     parser.add_argument('--season', type=str, default=None,
                         help='Override season code (default: current)')
+    parser.add_argument('--backfill', type=int, default=0, metavar='N',
+                        help='Also download the last N seasons for the '
+                             'selected leagues (for newly added leagues) and '
+                             'exit')
     args = parser.parse_args()
 
     season = args.season or current_season_code()
@@ -248,6 +301,12 @@ def main() -> int:
     print(f"  FETCH  {today.isoformat()}  season={season}  "
           f"{len(keys)} leagues  dry_run={args.dry_run}  apply={args.apply}")
     print('=' * 60)
+
+    if args.backfill:
+        n = backfill(keys, past_seasons(args.backfill, today), args.timeout)
+        print(f"\n  Wrote {n} season file(s). Rebuild features with: "
+              f"python scripts/refresh_data.py")
+        return 0
 
     results = []
     for lg in keys:
