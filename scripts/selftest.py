@@ -183,6 +183,9 @@ def check_toto_math() -> None:
 
 # ------------------------------------------------------------------ 5. models
 def check_models(quick: bool) -> None:
+    """Every league with models must predict. Leagues that simply have not
+    been trained yet are a warning, not a failure — but they must be named,
+    because in the app they otherwise return nothing silently."""
     from scripts import data_loader, utils
     from scripts import predict as predict_mod
     t0 = time.time()
@@ -190,8 +193,18 @@ def check_models(quick: bool) -> None:
     team_stats = utils.get_team_stats_table(hist)
     t2l = utils.get_team_to_league_map(hist)
     leagues = sorted({t2l[t] for t in t2l})
-    tried, ok = 0, 0
-    for lg in (leagues if not quick else leagues[:6]):
+    try:
+        have = set(utils.get_available_leagues())
+    except Exception:
+        have = set(leagues)
+
+    untrained = sorted(set(leagues) - have)
+    trained = [lg for lg in leagues if lg in have]
+    if quick:
+        trained = trained[:6]
+
+    tried, ok, broken = 0, 0, []
+    for lg in trained:
         teams = [t for t, l in t2l.items() if l == lg][:2]
         if len(teams) < 2:
             continue
@@ -202,11 +215,17 @@ def check_models(quick: bool) -> None:
             probs = p.get('1x2')
             if probs and abs(sum(probs.values()) - 1.0) < 0.02:
                 ok += 1
-        except Exception:
-            pass
-    status = PASS if ok == tried and tried else FAIL
-    record(status, 'club models predict',
-           f'{ok}/{tried} leagues in {time.time()-t0:.0f}s')
+            else:
+                broken.append(lg)
+        except Exception as e:
+            broken.append(f'{lg}({type(e).__name__})')
+    record(PASS if not broken else FAIL, 'trained leagues predict',
+           f'{ok}/{tried} in {time.time()-t0:.0f}s'
+           + (f' — broken: {broken}' if broken else ''))
+    if untrained:
+        record(WARN, 'every league has models',
+               f'{len(untrained)} untrained: ' + ', '.join(untrained[:8])
+               + '  — they appear in the app but return no prediction')
 
 
 # ---------------------------------------------------------- 6. internationals
