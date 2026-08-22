@@ -6,6 +6,8 @@ Stats tables, model I/O, fixture feature construction, display helpers.
 
 import os
 import glob
+from functools import lru_cache
+
 import pandas as pd
 import numpy as np
 import joblib
@@ -437,12 +439,22 @@ def create_fixture_features(home_stats: pd.Series,
 # =============================================================================
 # MODEL I/O
 # =============================================================================
+@lru_cache(maxsize=1024)
+def _load_model_file(path: str, mtime: float):
+    """Deserialise one model file. Cached on (path, mtime), so a retrained
+    model is picked up automatically while a long-running app or a batch of
+    predictions stops paying to re-read the same file."""
+    return joblib.load(path)
+
+
 def load_model(model_type: str, league: str, tier: int = 1,
                model_set: str = 'current', engine: str = 'xgb'):
     path = _model_path(model_type, league, tier, model_set, engine)
-    if not os.path.exists(path):
-        return None
-    return joblib.load(path)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return None                       # missing (or unreadable) model
+    return _load_model_file(path, mtime)
 
 
 def save_model(model, model_type: str, league: str, tier: int = 1,
