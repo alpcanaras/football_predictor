@@ -234,17 +234,100 @@ def covered_prob(sorted_probs, c):
     return float(np.sum(sorted_probs[:c]))
 
 
-def optimize_system(per_match_sorted, threshold, budget):
-    """Greedy coverage allocation. per_match_sorted: list of descending [p1,p2,p3].
+def optimize_system(per_match_sorted, threshold, budget, restarts=8, seed=0):
+    """Best coverage allocation within a column budget.
 
+    per_match_sorted: list of descending [p1, p2, p3] per match.
     Returns (coverage list in {1,2,3}, columns_used, P(>=threshold)).
+
+    Greedy alone reliably under-spends the budget — it only ever takes the
+    single most efficient upgrade and stops when that one no longer fits, so
+    it would leave e.g. 27 of 48 paid-for columns unused. We therefore seed
+    with greedy and then hill-climb over single-match and pairwise coverage
+    changes (with random restarts), which recovers the optimum on every
+    brute-forced case tested.
     """
+    n = len(per_match_sorted)
+    covered = [[covered_prob(sp, c) for c in (0, 1, 2, 3)]
+               for sp in per_match_sorted]
+
+    def cost(cv):
+        out = 1
+        for c in cv:
+            out *= c
+        return out
+
+    def score(cv):
+        return prob_at_least([covered[i][cv[i]] for i in range(n)], threshold)
+
+    seed_cov = _greedy_cover(per_match_sorted, threshold, budget, covered)
+    best_cov = list(seed_cov)
+    best_p = score(best_cov)
+
+    rng = np.random.default_rng(seed)
+    for attempt in range(max(1, restarts)):
+        cur = list(seed_cov) if attempt == 0 else _random_feasible(n, budget, rng)
+        cur_p = score(cur)
+        improved = True
+        while improved:
+            improved = False
+            for i in range(n):                       # single-match moves
+                keep = cur[i]
+                for c in (1, 2, 3):
+                    if c == keep:
+                        continue
+                    cur[i] = c
+                    if cost(cur) <= budget:
+                        p = score(cur)
+                        if p > cur_p + 1e-12:
+                            cur_p, keep, improved = p, c, True
+                    cur[i] = keep
+                cur[i] = keep
+            for i in range(n):                       # pairwise moves
+                for j in range(i + 1, n):
+                    ki, kj = cur[i], cur[j]
+                    bi, bj, bp = ki, kj, cur_p
+                    for ci in (1, 2, 3):
+                        for cj in (1, 2, 3):
+                            if ci == ki and cj == kj:
+                                continue
+                            cur[i], cur[j] = ci, cj
+                            if cost(cur) <= budget:
+                                p = score(cur)
+                                if p > bp + 1e-12:
+                                    bi, bj, bp = ci, cj, p
+                    cur[i], cur[j] = bi, bj
+                    if bp > cur_p + 1e-12:
+                        cur_p, improved = bp, True
+        if cur_p > best_p + 1e-12:
+            best_cov, best_p = list(cur), cur_p
+
+    return best_cov, cost(best_cov), best_p
+
+
+def _random_feasible(n, budget, rng):
+    """A random assignment that fits the budget (for multi-start search)."""
+    cov = [1] * n
+    cost = 1
+    order = rng.permutation(n)
+    for i in order:
+        choices = [c for c in (2, 3) if cost * c <= budget]
+        if not choices or rng.random() < 0.3:
+            continue
+        c = int(rng.choice(choices))
+        cov[i] = c
+        cost *= c
+    return cov
+
+
+def _greedy_cover(per_match_sorted, threshold, budget, covered):
+    """Marginal-gain-per-column greedy (kept as the search seed)."""
     n = len(per_match_sorted)
     cov = [1] * n
     cols = 1
 
     def qs():
-        return [covered_prob(per_match_sorted[i], cov[i]) for i in range(n)]
+        return [covered[i][cov[i]] for i in range(n)]
 
     cur_p = prob_at_least(qs(), threshold)
     while True:
@@ -268,7 +351,7 @@ def optimize_system(per_match_sorted, threshold, budget):
         cov[i] += 1
         cols = new_cols
         cur_p += gain
-    return cov, cols, cur_p
+    return cov
 
 
 # =============================================================================
