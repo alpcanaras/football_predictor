@@ -181,6 +181,30 @@ def _clear_game(game):
     _save_coupon_file(game, '')
 
 
+def _fix_name(game, old, key):
+    """on_click: replace an unrecognised name in the coupon with the chosen one."""
+    new = st.session_state.get(key)
+    if not new or new == old:
+        return
+    ck = f'coupon_{game}'
+    lines = []
+    for line in st.session_state.get(ck, '').splitlines():
+        # only swap the name as a whole side of the fixture, never mid-word
+        parts = toto.parse_lines(line)
+        if not parts.empty:
+            r = parts.iloc[0]
+            if str(r['home']).strip() == old:
+                line = line.replace(old, new, 1)
+            elif str(r['away']).strip() == old:
+                idx = line.rfind(old)
+                if idx >= 0:
+                    line = line[:idx] + new + line[idx + len(old):]
+        lines.append(line)
+    st.session_state[ck] = '\n'.join(lines)
+    _save_coupon_file(game, st.session_state[ck])
+    st.session_state.pop(f'toto_res_{game}', None)
+
+
 def _do_add(ns, by_label):
     """on_click callback: append the multiselect's picks to the chosen game."""
     sel = st.session_state.get(f'{ns}_sel', [])
@@ -651,8 +675,32 @@ with tab_toto:
             dc2.button("🧹 Remove duplicates", on_click=_dedup_coupon,
                        args=(game,))
         if unknown:
-            st.warning("Not recognized (will default to 1/3 unless you add "
-                       "odds): " + " · ".join(unknown))
+            st.warning("Not recognized — these will default to 1/3 each unless "
+                       "you add odds or fix the name.")
+            known_all = toto.all_known_names(team_to_league)
+            club = set(team_to_league)
+            ic2 = toto._load_intl()
+            seen_bad = []
+            for _, r in parsed.iterrows():
+                for side in ('home', 'away'):
+                    nm = str(r[side]).strip()
+                    if not nm or nm in seen_bad:
+                        continue
+                    if toto._fuzzy(nm, club) or toto._intl_name(nm, ic2):
+                        continue
+                    seen_bad.append(nm)
+            for nm in seen_bad[:8]:
+                opts = toto.suggest_names(nm, known_all, 6)
+                fc = st.columns([2, 3, 1])
+                fc[0].markdown(f"`{nm}`")
+                if opts:
+                    key = f'fix_{game}_{nm}'
+                    fc[1].selectbox("Did you mean", opts, key=key,
+                                    label_visibility='collapsed')
+                    fc[2].button("Fix", key=f'btn_{key}', on_click=_fix_name,
+                                 args=(game, nm, key))
+                else:
+                    fc[1].caption("no close match — add odds for this row")
 
     ca1, ca2 = st.columns([1, 1])
     analyze = ca1.button("Analyze coupon", type="primary")

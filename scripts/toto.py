@@ -135,12 +135,96 @@ def _model_probs(row, ctx):
 def _fuzzy(name, teams):
     if name in teams:
         return name
+    name = apply_alias(name)
+    if name in teams:
+        return name
     low = _fold(name)
     hits = [t for t in teams if _fold(t) == low]
     if hits:
         return hits[0]
     hits = [t for t in teams if low and (low in _fold(t) or _fold(t) in low)]
     return hits[0] if len(hits) == 1 else None
+
+
+def suggest_names(name, candidates, limit=5):
+    """Closest known team names to what was typed.
+
+    Deliberately *suggests* rather than guesses: silently resolving a near-miss
+    is how the wrong team ends up on a coupon. Ranking is by accent-folded
+    similarity, with prefix and substring matches promoted, since coupons are
+    usually typed as an abbreviation of the real name ("man utd", "gala").
+    """
+    import difflib
+    low = _fold(apply_alias(name))
+    if not low:
+        return []
+    folded = {}
+    for t in candidates:
+        folded.setdefault(_fold(t), t)
+    if low in folded:                      # an alias resolved it outright
+        return [folded[low]]
+
+    scored = []
+    for f, orig in folded.items():
+        if f.startswith(low) or low.startswith(f):
+            score = 0.95
+        elif low in f or f in low:
+            score = 0.85
+        else:
+            score = difflib.SequenceMatcher(None, low, f).ratio()
+            # token overlap catches reordered / partial names
+            a, b = set(low.split()), set(f.split())
+            if a and b:
+                score = max(score, len(a & b) / len(a | b))
+        if score >= 0.55:
+            scored.append((score, orig))
+    scored.sort(key=lambda s: (-s[0], len(s[1])))
+    return [t for _, t in scored[:limit]]
+
+
+def all_known_names(team_to_league=None):
+    """Every name the coupon can resolve: clubs plus national teams."""
+    names = set(team_to_league or ())
+    try:
+        names |= set(_load_intl()['ratings'])
+    except Exception:
+        pass
+    return sorted(names)
+
+
+# Shorthand no fuzzy matcher can bridge: acronyms, and clubs football-data.co.uk
+# names differently from common usage ("Dortmund", not "Borussia Dortmund").
+# This is an alias layer applied at *lookup* time — the CSVs are never rewritten,
+# because the fetcher overwrites them on every refresh and edited source data
+# would silently drift from what football-data.co.uk actually published.
+CLUB_ALIASES = {
+    'psg': 'Paris SG', 'paris saint-germain': 'Paris SG',
+    'paris saint germain': 'Paris SG',
+    'man utd': 'Man United', 'man u': 'Man United',
+    'manchester united': 'Man United', 'manchester city': 'Man City',
+    'spurs': 'Tottenham',
+    'bvb': 'Dortmund', 'borussia dortmund': 'Dortmund',
+    'borussia monchengladbach': "M'gladbach", 'gladbach': "M'gladbach",
+    'monchengladbach': "M'gladbach",
+    'atletico madrid': 'Ath Madrid', 'atleti': 'Ath Madrid',
+    'atletico': 'Ath Madrid',
+    'athletic bilbao': 'Ath Bilbao', 'athletic club': 'Ath Bilbao',
+    'barca': 'Barcelona', 'barça': 'Barcelona',
+    'bayer leverkusen': 'Leverkusen',
+    'psv': 'PSV Eindhoven',
+    'inter milan': 'Inter', 'internazionale': 'Inter',
+    'ac milan': 'Milan',
+    'fener': 'Fenerbahce', 'cimbom': 'Galatasaray',
+    'sheffield wednesday': 'Sheffield Weds', 'sheff wed': 'Sheffield Weds',
+    'sheffield united': 'Sheffield United', 'sheff utd': 'Sheffield United',
+    'wolves': 'Wolves', 'nottingham forest': "Nott'm Forest",
+    'forest': "Nott'm Forest",
+}
+
+
+def apply_alias(name):
+    """Canonical club name for a common shorthand, or the name unchanged."""
+    return CLUB_ALIASES.get(_fold(name), name)
 
 
 # --- national-team (World Cup / international) fallback --------------------
