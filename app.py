@@ -307,11 +307,15 @@ def known_teams():
 STALE_DAYS = 28
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def modelled_leagues():
     """Leagues that actually have trained models behind them. A league can be
     in the data (so it appears in the dropdowns) while its models have not been
-    trained yet — without this the app just returns nothing and says nothing."""
+    trained yet — without this the app just returns nothing and says nothing.
+
+    Short TTL rather than a permanent cache: it is only a directory scan, and
+    a league finishing training in the background should show up without
+    restarting the app."""
     try:
         return set(utils.get_available_leagues())
     except Exception:
@@ -408,6 +412,7 @@ with st.sidebar:
             load_everything.clear()
             known_teams.clear()
             league_freshness.clear()
+            modelled_leagues.clear()
             st.rerun()
         else:
             st.error("Update failed")
