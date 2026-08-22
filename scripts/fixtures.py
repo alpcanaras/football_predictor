@@ -132,6 +132,43 @@ def lookup_odds(fixtures: pd.DataFrame, league: str,
     return out
 
 
+def find_odds_any_league(fixtures: pd.DataFrame, home: str, away: str,
+                         hours_back: int = 36) -> dict | None:
+    """Odds for an upcoming fixture, matched by team name across all leagues.
+
+    ``lookup_odds`` needs the league key and exact names; a coupon row has
+    neither, so this matches accent-folded names (and the coupon aliases) over
+    the whole feed. Used to fill in a coupon's odds automatically.
+    """
+    if fixtures is None or fixtures.empty:
+        return None
+    from scripts import toto
+
+    h, a = toto._fold(toto.apply_alias(home)), toto._fold(toto.apply_alias(away))
+    if not h or not a:
+        return None
+    fresh = fixtures[fixtures['Date']
+                     >= pd.Timestamp.now() - pd.Timedelta(hours=hours_back)]
+    if fresh.empty:
+        return None
+    fh = fresh['HomeTeam'].map(lambda x: toto._fold(x))
+    fa = fresh['AwayTeam'].map(lambda x: toto._fold(x))
+
+    m = fresh[(fh == h) & (fa == a)]
+    if m.empty:                                   # fall back to containment
+        m = fresh[[bool(x) and bool(y) for x, y in zip(
+            fh.map(lambda v: h in v or v in h), fa.map(lambda v: a in v or v in a))]]
+    if m.empty:
+        return None
+    r = m.iloc[0]
+    if pd.isna(r['OddsH']) or pd.isna(r['OddsD']) or pd.isna(r['OddsA']):
+        return None
+    return {'OddsH': float(r['OddsH']), 'OddsD': float(r['OddsD']),
+            'OddsA': float(r['OddsA']), 'Date': r['Date'],
+            'HomeTeam': r['HomeTeam'], 'AwayTeam': r['AwayTeam'],
+            'league': r.get('league')}
+
+
 def main():
     fetch(force=True)
     fx = load(fetch_if_missing=False)

@@ -7,14 +7,14 @@ A point-and-click interface. No notebooks, no cells.
     streamlit run app.py           # opens in your browser
 
 Four tabs:
-  * Match      — pick a league + two teams, get the full prediction card
-  * Fixtures   — every upcoming match with models, anchored to live odds
-  * World Cup  — today's / upcoming national-team matches
-  * Toto       — two persistent coupons (Turkish + German), system optimizer
+  * Toto           — two persistent coupons (Turkish + German), system optimiser
+  * Fixtures       — every upcoming match with models, anchored to live odds
+  * Match          — pick a league + two teams, get the full prediction card
+  * Internationals — upcoming national-team matches
 
-Any match in the first three tabs can be pushed into either coupon. Coupons are
-saved to data/_toto/<game>.txt, so they survive reloads and new browser tabs
-until you clear them.
+Any match in the other tabs can be pushed into either coupon. Coupons are saved
+to data/_toto/<game>.txt (override with FOOTBALL_PREDICTOR_TOTO_DIR), so they
+survive reloads and new browser tabs until you clear them.
 """
 
 import os
@@ -179,6 +179,53 @@ def _clear_game(game):
     st.session_state[f'coupon_{game}'] = ''
     st.session_state.pop(f'toto_res_{game}', None)
     _save_coupon_file(game, '')
+
+
+def _fill_odds(game):
+    """on_click: look every odds-less coupon row up in the live feed and
+    append its 1X2 odds. Typing odds by hand is the slowest part of building a
+    coupon, and where odds exist they dominate the model anyway."""
+    from scripts import fixtures as fx_mod
+    ck = f'coupon_{game}'
+    try:
+        fx_mod.fetch()
+        feed = fx_mod.load(fetch_if_missing=False)
+    except Exception as e:
+        st.session_state[f'odds_msg_{game}'] = ('error', f'Feed unavailable: {e}')
+        return
+
+    filled = missing = 0
+    out = []
+    for line in st.session_state.get(ck, '').splitlines():
+        parsed_line = toto.parse_lines(line)
+        if parsed_line.empty:
+            out.append(line)
+            continue
+        r = parsed_line.iloc[0]
+        has = all(pd.notna(r.get(c)) for c in ('o1', 'ox', 'o2'))
+        if has or not str(r['away']).strip():
+            out.append(line)
+            continue
+        odds = fx_mod.find_odds_any_league(feed, r['home'], r['away'])
+        if odds:
+            out.append(f"{line.rstrip()}  {odds['OddsH']:.2f} "
+                       f"{odds['OddsD']:.2f} {odds['OddsA']:.2f}")
+            filled += 1
+        else:
+            out.append(line)
+            missing += 1
+    st.session_state[ck] = '\n'.join(out)
+    _save_coupon_file(game, st.session_state[ck])
+    st.session_state.pop(f'toto_res_{game}', None)
+    if filled:
+        st.session_state[f'odds_msg_{game}'] = (
+            'success', f"Filled odds for {filled} match(es)."
+            + (f" {missing} not in the feed (kick-off too far off, or a league "
+               "the feed does not carry)." if missing else ''))
+    else:
+        st.session_state[f'odds_msg_{game}'] = (
+            'info', "No odds found for these matches — the feed only carries "
+            "fixtures in the next few days.")
 
 
 def _fix_name(game, old, key):
@@ -379,8 +426,9 @@ with st.sidebar:
 
 
 st.title("⚽ Football Predictor")
-tab_match, tab_fix, tab_wc, tab_toto = st.tabs(
-    ["🎯 Match", "📅 Fixtures", "🌍 World Cup", "🎟️ Toto"])
+# Toto first: it is the thing that gets used every week.
+tab_toto, tab_fix, tab_match, tab_wc = st.tabs(
+    ["🎟️ Toto", "📅 Fixtures", "🎯 Match", "🌍 Internationals"])
 
 
 # ============================================================================
@@ -531,7 +579,7 @@ with tab_fix:
 with tab_wc:
     wc_days = st.slider("Days ahead ", 1, 21, 5, key="wcdays")
     wca, wcb = st.columns([1, 1])
-    load_wc = wca.button("Load World Cup matches", type="primary")
+    load_wc = wca.button("Load upcoming internationals", type="primary")
     if wcb.button("🔄 Refresh results + fixtures", key="wc_refresh",
                   help="Pull the latest international results and upcoming "
                        "fixtures. Knockout matches only appear here once the "
@@ -540,7 +588,7 @@ with tab_wc:
         try:
             with st.spinner("Downloading latest international results…"):
                 intl_u.cmd_update(None)
-            st.success("Data refreshed — now click **Load World Cup matches**.")
+            st.success("Data refreshed — now click **Load upcoming internationals**.")
         except Exception as e:
             st.error(f"Refresh failed: {e}")
 
@@ -702,9 +750,17 @@ with tab_toto:
                 else:
                     fc[1].caption("no close match — add odds for this row")
 
-    ca1, ca2 = st.columns([1, 1])
+    ca1, ca2, ca3 = st.columns([1, 1, 1])
     analyze = ca1.button("Analyze coupon", type="primary")
-    ca2.button("🗑️ Clear this coupon", on_click=_clear_game, args=(game,))
+    ca2.button("📡 Fill odds from feed", on_click=_fill_odds, args=(game,),
+               help="Look each odds-less match up in the live bookmaker feed "
+                    "and fill in 1X2 odds. Where odds exist they carry the "
+                    "prediction, so this is the single best thing you can do "
+                    "to a coupon.")
+    ca3.button("🗑️ Clear this coupon", on_click=_clear_game, args=(game,))
+    _om = st.session_state.pop(f'odds_msg_{game}', None)
+    if _om:
+        getattr(st, _om[0])(_om[1])
 
     if analyze:
         if parsed.empty:
