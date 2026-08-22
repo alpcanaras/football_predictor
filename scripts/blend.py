@@ -42,7 +42,17 @@ BLEND_WEIGHTS_FILE = os.path.join(config.MODELS_DIR, 'blend_weights.json')
 
 # Leagues whose models were trained on the full dataset (no OOS window yet);
 # excluded from weight fitting/evaluation until their next cutoff retrain.
-IN_SAMPLE_LEAGUES = {'usa', 'mexico', 'irish'}
+# Including them would let a model score itself on its own training data and
+# take blend weight it has not earned — the fitted weight on the model
+# component is the whole point of this file.
+IN_SAMPLE_LEAGUES = {
+    'usa', 'mexico', 'irish',
+    # trained 2026-08 on all available data when the league was added
+    'british_conference',
+    'british_league2', 'scottish_prem', 'scottish_champ', 'scottish_l1',
+    'scottish_l2', 'french_2', 'italian_2',
+    'austria', 'poland', 'romania',
+}
 
 EPS = 1e-9
 
