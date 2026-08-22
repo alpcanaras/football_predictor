@@ -396,16 +396,19 @@ with tab_match:
                     imp = mkt['implied'][key]
                     r['Book odds'] = f"{mkt['odds'][key]:.2f}"
                     r['Book %'] = f"{imp:.0%}"
-                    edge = p[key] - imp
-                    r['Edge'] = f"{edge:+.0%}"
-                    r['Value'] = '✅' if edge > 0.03 else ''
+                    r['Model − Book'] = f"{p[key] - imp:+.0%}"
                 rows.append(r)
             st.dataframe(pd.DataFrame(rows), use_container_width=True,
                          hide_index=True)
             if mkt:
-                st.caption("Edge = model − bookmaker implied probability. "
-                           "✅ marks a model edge over 3% (treat as a *lean*, "
-                           "not a sure thing — the book is sharp).")
+                st.caption(
+                    "**Model − Book** is disagreement, *not* value. Measured on "
+                    "684 matches out-of-sample (Jun–Aug 2026): the bookmaker "
+                    "scored 1.003 log-loss, this model 1.033, and fitting the "
+                    "blend gives the model **zero** weight — so where odds "
+                    "exist the shown probabilities are essentially the market's. "
+                    "The model earns its keep on matches with no odds, and in "
+                    "Toto, where you are playing the crowd rather than the book.")
             else:
                 st.caption("No live odds for this fixture in the feed — "
                            "showing model probabilities only.")
@@ -460,9 +463,11 @@ with tab_fix:
                 if c in df.columns:
                     df[c] = (df[c] * 100).round(0)
             st.dataframe(df, use_container_width=True, hide_index=True)
-            st.caption("Anchored = 1X2 blended with live odds. Edge = model − "
-                       "market on the model's pick (only meaningful where the "
-                       "model beats the book).")
+            st.caption(
+                "Anchored = 1X2 blended with live odds (where odds exist the "
+                "market dominates — the model is fitted to zero weight against "
+                "it). **Edge** is the model−market gap on the model's pick: "
+                "read it as disagreement to investigate, not as a value bet.")
             st.download_button("Download CSV", df.to_csv(index=False),
                                "fixtures.csv")
 
@@ -640,7 +645,7 @@ with tab_toto:
                    'team_to_league': team_to_league,
                    'teams': set(team_to_league),
                    'weights': toto._load_blend_weights()}
-            out, sorted_probs, unmatched = [], [], []
+            out, sorted_probs, unmatched, picks = [], [], [], []
             for _, r in parsed.iterrows():
                 p, src, model = toto.match_probs(r, ctx)
                 if p is None:
@@ -661,9 +666,13 @@ with tab_toto:
                             if p[order[0]] > 0 else None,
                             'Src': src, 'Note': flag})
                 sorted_probs.append(np.sort(p)[::-1])
+                picks.append({'home': str(r['home']), 'away': str(r['away']),
+                              'p1': float(p[0]), 'px': float(p[1]),
+                              'p2': float(p[2]),
+                              'pick': toto.OUTCOMES[order[0]], 'src': src})
             st.session_state[f'toto_res_{game}'] = {
                 'text': text, 'out': out, 'sorted_probs': sorted_probs,
-                'unmatched': unmatched}
+                'unmatched': unmatched, 'picks': picks}
 
     # --- results persist across reruns; system section follows the budget ----
     res = st.session_state.get(f'toto_res_{game}')
@@ -693,12 +702,15 @@ with tab_toto:
             if t < len(d) and k < len(tiers):
                 tiers[k].metric(f"P(≥{t})", f"{d[t:].sum():.1%}")
 
+        p_single = d[threshold:].sum()
+        p_played = p_single
         if budget > 1:
             cov, cols, p_thr = toto.optimize_system(
                 sorted_probs, threshold, int(budget))
+            p_played = p_thr
             st.markdown(f"**Best system in {budget} columns** — uses "
                         f"{cols} columns; **P(≥{threshold}) = {p_thr:.1%}** "
-                        f"(vs {d[threshold:].sum():.1%} single)")
+                        f"(vs {p_single:.1%} single)")
             ups = [(i, cov[i]) for i in range(len(cov)) if cov[i] > 1]
             if ups:
                 st.markdown("Cover these least-predictable matches:")
@@ -706,6 +718,73 @@ with tab_toto:
                     kind = "**TRIPLE** (play 1, X and 2)" if c == 3 \
                         else "**double** (top 2 outcomes)"
                     st.markdown(f"- {out[i]['Match']} → {kind}")
+
+        # --- record it, so "does this work?" becomes a number ----------------
+        sv1, sv2 = st.columns([1, 3])
+        note = sv2.text_input("Note (optional)", key=f'note_{game}',
+                              placeholder="e.g. week 34, played 48 columns",
+                              label_visibility='collapsed')
+        if sv1.button("💾 Save to history", key=f'save_{game}'):
+            from scripts import track
+            track.save_coupon(game, res.get('picks', []), budget=int(budget),
+                              threshold=threshold, p_threshold=float(p_played),
+                              note=note or '')
+            st.session_state.pop('graded', None)
+            st.success("Saved. Once these matches are played, grade them in "
+                       "**📈 History** below.")
+
+    # ------------------------------------------------------------------ history
+    with st.expander("📈 History & calibration"):
+        from scripts import track
+        entries = track.load_history()
+        if not entries:
+            st.caption("No coupons saved yet. Analyse one above and hit "
+                       "**💾 Save to history** — after the matches are played "
+                       "this grades itself, so you can see your real hit rate "
+                       "against what the model promised.")
+        else:
+            if st.button("🔄 Grade against results", key='grade_btn'):
+                st.session_state['graded'] = track.grade_all()
+            graded = st.session_state.get('graded')
+            if graded is None:
+                st.caption(f"{len(entries)} saved coupon(s). "
+                           "Hit **Grade against results**.")
+            else:
+                rows, done, hits = [], 0, 0
+                tot_c = tot_e = 0.0
+                for g in graded:
+                    pending = g['graded'] < g['n']
+                    won = (g['threshold'] is not None
+                           and g['correct'] >= g['threshold'])
+                    if not pending and g['graded']:
+                        done += 1; hits += int(won)
+                        tot_c += g['correct']; tot_e += g['expected']
+                    rows.append({
+                        'Saved': (g['saved_at'] or '')[:16].replace('T', ' '),
+                        'Game': (g['game'] or '').capitalize(),
+                        'Result': (f"{g['correct']}/{g['graded']}"
+                                   + (f" (of {g['n']})" if pending else '')),
+                        'Expected': round(g['expected'], 1),
+                        'Need': g['threshold'],
+                        'Prize': ('⏳' if pending else ('✅' if won else '—')),
+                        'P(prize) said': (
+                            f"{g['p_threshold']:.1%}"
+                            if g.get('p_threshold') is not None else '—'),
+                    })
+                st.dataframe(pd.DataFrame(rows), use_container_width=True,
+                             hide_index=True)
+                if done:
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Coupons completed", done)
+                    m2.metric("Cleared the threshold", f"{hits}/{done}")
+                    m3.metric("Correct vs expected",
+                              f"{tot_c:.0f} / {tot_e:.1f}",
+                              delta=f"{tot_c - tot_e:+.1f}")
+                    st.caption(
+                        "**Expected** is the Poisson-binomial mean — the honest "
+                        "benchmark. Landing consistently below it means the "
+                        "probabilities are running optimistic; around it means "
+                        "they are calibrated and the rest is variance.")
 
 
 st.caption(f"Loaded {len(team_to_league)} teams · {len(leagues)} leagues · "
