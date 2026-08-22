@@ -845,6 +845,31 @@ with tab_toto:
                         else "**double** (top 2 outcomes)"
                     st.markdown(f"- {out[i]['Match']} → {kind}")
 
+        # --- how far does each extra column actually get you? ----------------
+        with st.expander("💸 What does another column buy me?"):
+            ladder = []
+            prev = None
+            for b in (1, 2, 4, 8, 16, 32, 64, 128, 256):
+                cv, cl, pt = toto.optimize_system(sorted_probs, threshold, b)
+                if prev is not None and cl == prev:
+                    continue            # this budget cannot buy anything new
+                prev = cl
+                ladder.append({
+                    'Columns': cl,
+                    f'P(≥{threshold})': f"{pt:.2%}",
+                    'vs single': (f"×{pt / p_single:.1f}"
+                                  if p_single > 0 else '—'),
+                    'Doubles': sum(1 for c in cv if c == 2),
+                    'Triples': sum(1 for c in cv if c == 3),
+                })
+            st.dataframe(pd.DataFrame(ladder), use_container_width=True,
+                         hide_index=True)
+            st.caption(
+                "Cost rises with the column count while P(prize) rises much "
+                "more slowly, so the last doubling is always the worst value — "
+                "this is for choosing a budget you are happy to lose, not for "
+                "finding a profitable one.")
+
         # --- record it, so "does this work?" becomes a number ----------------
         sv1, sv2 = st.columns([1, 3])
         note = sv2.text_input("Note (optional)", key=f'note_{game}',
