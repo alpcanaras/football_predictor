@@ -79,10 +79,14 @@ def _load_coupon_file(game):
 
 
 def _save_coupon_file(game, text):
+    """Atomic write: a coupon is a week's work, so never leave it truncated
+    if the process dies mid-write."""
     try:
         os.makedirs(COUPON_DIR, exist_ok=True)
-        with open(_coupon_path(game), 'w', encoding='utf-8') as f:
+        tmp = _coupon_path(game) + '.tmp'
+        with open(tmp, 'w', encoding='utf-8') as f:
             f.write(text or '')
+        os.replace(tmp, _coupon_path(game))
     except OSError:
         pass
 
@@ -176,9 +180,21 @@ def _parse_slash_odds(s):
 
 
 def _clear_game(game):
+    """Clear the coupon, keeping what was there for a one-click undo — a
+    misclick must not cost the week's coupon."""
+    old = st.session_state.get(f'coupon_{game}', '') or _load_coupon_file(game)
+    if old.strip():
+        st.session_state[f'undo_{game}'] = old
     st.session_state[f'coupon_{game}'] = ''
     st.session_state.pop(f'toto_res_{game}', None)
     _save_coupon_file(game, '')
+
+
+def _undo_clear(game):
+    old = st.session_state.pop(f'undo_{game}', '')
+    if old:
+        st.session_state[f'coupon_{game}'] = old
+        _save_coupon_file(game, old)
 
 
 def _fill_odds(game):
@@ -772,6 +788,9 @@ with tab_toto:
                     "prediction, so this is the single best thing you can do "
                     "to a coupon.")
     ca3.button("🗑️ Clear this coupon", on_click=_clear_game, args=(game,))
+    if st.session_state.get(f'undo_{game}'):
+        st.button("↩️ Undo clear", key=f'undo_btn_{game}',
+                  on_click=_undo_clear, args=(game,))
     _om = st.session_state.pop(f'odds_msg_{game}', None)
     if _om:
         getattr(st, _om[0])(_om[1])
