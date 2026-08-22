@@ -139,6 +139,21 @@ def train(markets, n_trials, cutoff, decay, verbose=True):
 # =============================================================================
 # PREDICTION
 # =============================================================================
+def knows_league(league):
+    """True if the trained pooled model has a one-hot column for this league.
+
+    Leagues added after the last pooled training have no column, so pooling
+    them in would be extrapolation to an unseen league — callers should fall
+    back to the per-league ensemble until the pooled model is retrained.
+    """
+    try:
+        with open(_meta_path(), encoding='utf-8') as f:
+            columns = json.load(f)['columns']
+    except (OSError, ValueError, KeyError):
+        return False
+    return f'lg_{league}' in columns
+
+
 def pooled_proba(market, df_rows):
     """Engine-averaged pooled predict_proba for the given rows (any leagues).
 

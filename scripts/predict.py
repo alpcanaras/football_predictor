@@ -100,6 +100,11 @@ def _blend_pooled_1x2(p, X, league, model_set):
         return p
     try:
         from scripts import pooled as pooled_mod
+        # A league added after the pooled model was trained has no one-hot
+        # column, so the pooled model would be extrapolating to a league it has
+        # never seen. Fall back to the per-league ensemble until it is retrained.
+        if not pooled_mod.knows_league(league):
+            return p
         fx = X.copy()
         fx['league'] = league
         pp = pooled_mod.pooled_proba('1x2', fx)
