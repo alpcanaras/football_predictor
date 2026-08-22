@@ -695,10 +695,19 @@ def cmd_wc2026(args):
         np.add.at(adv_count, order[:, 0], 1)
         np.add.at(adv_count, order[:, 1], 1)
         thirds_idx[:, gi] = order[:, 2]
-    third_keys = np.take_along_axis(key, thirds_idx, axis=1)
-    best8 = np.take_along_axis(thirds_idx, np.argsort(-third_keys, axis=1)[:, :8],
-                               axis=1)
-    np.add.at(adv_count, best8.ravel(), 1)
+    # WC 2026: 12 groups, top two plus the 8 best third-placed teams -> 32.
+    # That rule is specific to this format, so only apply it when the bracket
+    # actually has 12 groups; otherwise report top-two advancement only.
+    n_best_thirds = 8 if len(groups) == 12 else 0
+    if n_best_thirds:
+        third_keys = np.take_along_axis(key, thirds_idx, axis=1)
+        best = np.take_along_axis(
+            thirds_idx, np.argsort(-third_keys, axis=1)[:, :n_best_thirds],
+            axis=1)
+        np.add.at(adv_count, best.ravel(), 1)
+    else:
+        print(f"  (note: {len(groups)} groups, not the 12 of WC 2026 — "
+              "showing top-two advancement only, no best-third places)")
 
     print(f"  {'Team':<24} {'Group':>5} {'Elo':>6} {'Win grp':>8} {'Advance':>8}")
     print('  ' + '-' * 56)
