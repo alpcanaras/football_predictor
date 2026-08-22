@@ -2,8 +2,8 @@
 Today's Predictions — one-command daily driver
 ===============================================
 Fetches the upcoming-fixtures odds feed, predicts every club fixture it has
-models for (market-anchored 1X2 when odds are available), and appends today's
-World Cup matches from the international module.
+models for (market-anchored 1X2 when odds are available), and appends any
+upcoming international matches (qualifiers, Nations League, friendlies).
 
 Usage:
     python scripts/today.py              # next 3 days
@@ -144,7 +144,7 @@ def wc_section(days: int) -> None:
     ratings, hist = intl.run_elo(df)
     model = intl.GoalModel().fit(hist)
 
-    print(f"\n  WORLD CUP ({len(fixtures)} matches, ratings through "
+    print(f"\n  INTERNATIONALS ({len(fixtures)} matches, ratings through "
           f"{df['date'].max().date()})\n")
     print(f"  {'Date':<11} {'Match':<42} {'1':>5} {'X':>5} {'2':>5} "
           f"{'O2.5':>6} {'BTTS':>6}")
@@ -168,7 +168,7 @@ def main():
     parser.add_argument('--csv', type=str, default=None,
                         help='Also write the club table to a CSV file')
     parser.add_argument('--no-wc', action='store_true',
-                        help='Skip the World Cup section')
+                        help='Skip the internationals section')
     args = parser.parse_args()
 
     rows = club_section(args.days)
@@ -181,7 +181,7 @@ def main():
         try:
             wc_section(args.days)
         except Exception as e:
-            print(f"\n  (World Cup section unavailable: {e})")
+            print(f"\n  (Internationals section unavailable: {e})")
 
 
 if __name__ == '__main__':
