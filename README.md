@@ -59,8 +59,8 @@ leave 27 of 48 paid-for columns unused — so on a 13-match German coupon this
 lifts P(≥10) from 21.7% to 24.4% at a budget of 64, for the same money.
 
 Where a row has no odds the model fills the probabilities in: **club** teams via
-the league ensembles, **national** teams (World Cup weeks) via the international
-Elo+Poisson model — so a coupon of `turkey`/`paraguay`/… is priced properly
+the league ensembles, **national** teams (Nations League, qualifiers, friendlies)
+via the international model — so a coupon of `turkey`/`paraguay`/… is priced properly
 instead of defaulting to 1/3 each. Name matching is accent-folded, so `curacao`,
 `besiktas`, `koln` resolve to `Curaçao`, `Beşiktaş`, `Köln`.
 
@@ -129,7 +129,7 @@ models, fits the international model, and boots the Streamlit app against a
 scratch coupon directory. Worth running after any data refresh or retrain.
 
 **One command for everything coming up** (club fixtures with live odds
-anchoring + today's World Cup matches):
+anchoring, plus any upcoming international matches):
 
 ```bash
 python scripts/today.py              # next 3 days
