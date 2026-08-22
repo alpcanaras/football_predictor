@@ -551,11 +551,20 @@ with tab_fix:
             st.info("No club fixtures with odds in this window "
                     "(leagues may be on a break).")
         else:
-            df = pd.DataFrame(frows)
+            all_lgs = sorted({r['League'] for r in frows})
+            pick_lgs = st.multiselect(
+                "Leagues", all_lgs, default=[], key='fix_lgs',
+                placeholder=f"All {len(all_lgs)} leagues "
+                            f"({len(frows)} matches) — pick to narrow")
+            shown = [r for r in frows
+                     if not pick_lgs or r['League'] in pick_lgs]
+
+            df = pd.DataFrame(shown)
             for c in ['P(1)', 'P(X)', 'P(2)', 'Conf', 'P(O2.5)', 'P(BTTS)',
                       'Edge']:
                 if c in df.columns:
                     df[c] = (df[c] * 100).round(0)
+            st.caption(f"Showing **{len(shown)}** of {len(frows)} fixtures.")
             st.dataframe(df, use_container_width=True, hide_index=True)
             st.caption(
                 "Anchored = 1X2 blended with live odds (where odds exist the "
@@ -569,7 +578,7 @@ with tab_fix:
                 '_label': f"{r['Date']} · {r['Home']} - {r['Away']}",
                 'home': r['Home'], 'away': r['Away'],
                 'odds': _parse_slash_odds(r.get('Odds(1/X/2)')),
-            } for r in frows]
+            } for r in shown]
             _add_controls(add_rows, 'fix')
 
 
