@@ -33,8 +33,11 @@ from scripts import toto
 
 st.set_page_config(page_title="Football Predictor", page_icon="⚽", layout="wide")
 
-COUPON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          'data', '_toto')
+# Saved coupons live here. Overridable so tests (and any throwaway session)
+# can point at a scratch directory instead of clobbering real coupons.
+COUPON_DIR = os.environ.get(
+    'FOOTBALL_PREDICTOR_TOTO_DIR',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', '_toto'))
 
 
 # ----------------------------------------------------------------------------
@@ -230,6 +233,30 @@ def known_teams():
     return sorted(set(team_to_league) | set(intl_names))
 
 
+STALE_DAYS = 28
+
+
+@st.cache_data(show_spinner=False)
+def league_freshness():
+    """Days since each league's last result — a prediction is only as current
+    as the form data behind it."""
+    today = pd.Timestamp.today().normalize()
+    last = hist.groupby('league')['Date'].max()
+    return {lg: (today - d).days for lg, d in last.items()}
+
+
+def stale_note(lg):
+    """Warning text if this league's data has gone cold, else None."""
+    days = league_freshness().get(lg)
+    if days is None or days <= STALE_DAYS:
+        return None
+    return (f"⚠️ **{disp(lg)}** data is **{days} days old** (last result "
+            f"{(pd.Timestamp.today().normalize() - pd.Timedelta(days=days)).date()}). "
+            "Form-based features are out of date — treat this prediction with "
+            "caution. Either the league is between seasons, or the new "
+            "season's file is not published yet.")
+
+
 # ----------------------------------------------------------------------------
 # Sidebar — data freshness + one-click refresh from the internet
 # ----------------------------------------------------------------------------
@@ -240,9 +267,27 @@ with st.sidebar:
         from scripts import international as _intl_mod
         _age_h = (dt.datetime.now().timestamp()
                   - os.path.getmtime(_intl_mod.INTL_FILE)) / 3600
-        st.caption(f"Internationals updated **{_age_h:.0f}h ago**")
+        _age = (f"{_age_h:.0f}h ago" if _age_h < 48
+                else f"{_age_h / 24:.0f} days ago")
+        st.caption(("⚠️ " if _age_h > 24 * 30 else "")
+                   + f"Internationals updated **{_age}**")
     except OSError:
         pass
+
+    _fresh = league_freshness()
+    _stale = sorted(((d, lg) for lg, d in _fresh.items() if d > STALE_DAYS),
+                    reverse=True)
+    if _stale:
+        with st.expander(f"⚠️ {len(_stale)} league(s) stale", expanded=False):
+            st.caption("No recent results — off-season, or the new season's "
+                       "file is not published yet. Predictions for these use "
+                       "old form.")
+            st.dataframe(
+                pd.DataFrame([{'League': disp(lg), 'Days old': d}
+                              for d, lg in _stale]),
+                hide_index=True, use_container_width=True)
+    else:
+        st.caption(f"✅ all {len(_fresh)} leagues current")
 
     if st.button("🔄 Update league data", key="sb_leagues",
                  help="Download the latest results CSVs for all 28 leagues "
@@ -255,15 +300,36 @@ with st.sidebar:
             proc = subprocess.run([sys.executable, _fetch,
                                    '--apply', '--refresh-processed'],
                                   capture_output=True, text=True)
-        if proc.returncode in (0, 3):        # 3 = some leagues failed (offseason)
-            st.toast("League data updated ✅ — reloading")
+        out = (proc.stdout or '')
+        # Report what actually happened per league rather than a bare exit code:
+        # a partial failure (a season not published yet) is normal and must not
+        # be reported as a clean success.
+        rows, promoted = [], 0
+        for line in out.splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[0] in config.FETCH_SOURCES:
+                rows.append((parts[0], parts[1]))
+            if line.strip().startswith('Promoted '):
+                try:
+                    promoted = int(line.split()[1])
+                except (IndexError, ValueError):
+                    pass
+        failed = [lg for lg, status in rows if status != 'OK']
+        if rows:
+            st.toast(f"Updated {promoted} league file(s)")
+            if failed:
+                st.warning(f"{len(failed)} not updated: "
+                           + ', '.join(failed[:8])
+                           + ("" if len(failed) <= 8 else ' …')
+                           + "  — usually a season that has not started yet. "
+                             "Existing data is kept.")
             load_everything.clear()
             known_teams.clear()
+            league_freshness.clear()
             st.rerun()
         else:
             st.error("Update failed")
-            st.code((proc.stdout or '')[-1200:] + '\n'
-                    + (proc.stderr or '')[-600:])
+            st.code(out[-1200:] + '\n' + (proc.stderr or '')[-600:])
 
     if st.button("🔄 Update internationals / WC", key="sb_intl",
                  help="Pull the latest national-team results + upcoming "
@@ -313,6 +379,9 @@ with tab_match:
         st.subheader(f"{home_p} vs {away_p}")
         if anchored:
             st.caption("✅ 1X2 / O-U anchored to live bookmaker odds")
+        _sn = stale_note(pred.get('league') or lg)
+        if _sn:
+            st.warning(_sn)
 
         p = pred.get('1x2', {})
         if p:
