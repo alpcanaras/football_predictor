@@ -5,6 +5,8 @@ matplotlib
 seaborn
 xgboost
 lightgbm
+optuna
+joblib
 scipy
 python-dateutil
 beautifulsoup4
@@ -13,3 +15,10 @@ requests
 jupyterlab
 tqdm
 streamlit>=1.30
+
+# Saved models are pickles, so the library that wrote them has to be able to
+# read them back. The models currently in models/tier1/ were trained with:
+#   scikit-learn 1.6.1   xgboost 3.0.2   lightgbm 4.6.0   joblib 1.5.1
+# If loading a model ever fails after an upgrade, either pin back to those
+# versions or retrain (scripts/train.py --fresh). scripts/selftest.py catches
+# this immediately: "trained leagues predict" fails when models cannot load.
