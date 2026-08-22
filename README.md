@@ -1,10 +1,15 @@
 # Football Predictor
 
 Per-league XGBoost + LightGBM ensembles for 1X2, Over/Under (1.5/2.5/3.5),
-BTTS, Half-Time and xG markets across 28 leagues. All historical match data
+BTTS, Half-Time and xG markets across 35 leagues. All historical match data
 comes from [football-data.co.uk](https://www.football-data.co.uk). Models are
 calibrated (isotonic / Platt chosen per market) and averaged across engines at
 prediction time.
+
+Built for pools play (Turkish Spor Toto, German 13er Wette), where the opponent
+is the crowd rather than a sharp bookmaker — so the goal is **calibrated**
+probabilities and good coverage allocation, not beating the market. Run
+`python scripts/selftest.py` after any refresh or retrain.
 
 ## Layout
 
@@ -31,9 +36,11 @@ pip install streamlit      # one-time
 streamlit run app.py       # opens in your browser
 ```
 
-Four tabs: pick a league + two teams for a full prediction card; browse all
-upcoming fixtures anchored to live odds; see the World Cup slate; or build a
-**Toto coupon** (the 🎟️ tab). Replaces the notebook for everyday use.
+Four tabs, Toto first because that is the weekly job: build a **coupon**;
+browse **fixtures** anchored to live odds; get a full prediction card for a
+single **match**; or see upcoming **internationals**. Replaces the notebook for
+everyday use. The sidebar shows data freshness, flags stale leagues, and
+refreshes everything from the internet in one click without a restart.
 
 ### Toto coupon optimizer
 
@@ -60,8 +67,23 @@ instead of defaulting to 1/3 each. Name matching is accent-folded, so `curacao`,
 In the app the Toto tab keeps **two separate coupons** (Turkish + German),
 entered as pasted `Home - Away` lines (one per match, optional `o1 ox o2` after).
 They're saved to `data/_toto/<game>.txt`, so they **persist across reloads and
-browser tabs** until you clear them. Any match in the 🎯 Match, 📅 Fixtures or
-🌍 World Cup tabs can be pushed into either coupon with the **➕ Add** control.
+browser tabs** until you clear them. Any match in the other tabs can be pushed
+into either coupon with the **➕ Add** control, and duplicates are caught
+(order-insensitive and accent-folded) rather than silently double-counted.
+
+Three things that make building a coupon quick:
+
+- **📡 Fill odds from feed** — looks every odds-less row up in the live
+  upcoming-fixtures feed and fills in the 1X2 odds. Since the market dominates
+  wherever odds exist, this is the single most valuable thing you can do to a
+  coupon, and it saves typing them by hand.
+- **Did you mean…?** — an unrecognised name gets a dropdown of close matches
+  and a one-click Fix that rewrites the line. Names are resolved through an
+  alias layer (`psg`, `bvb`, `gladbach`, `atleti`, `spurs`, …) plus accent
+  folding, applied at lookup time — the source CSVs are never rewritten,
+  because the fetcher replaces them on every refresh.
+- **💸 What does another column buy me?** — runs the optimiser across budgets
+  so the diminishing return is visible before you choose a stake.
 
 ```bash
 python scripts/toto.py --template                              # blank coupon.csv
@@ -224,12 +246,14 @@ if you want a different run time.
 
 ## League coverage
 
-25 leagues, split into two format families:
+35 leagues, split into two format families:
 
 - **Rich** (full columns: shots, corners, fouls, cards, HT results) → trains
   HT1X2 and HT O/U 0.5 in addition to the core markets:
-  English PL / Championship / League One / Conference, German Bundesliga / 2.
-  Bundesliga, Spanish La Liga / Segunda, Italian Serie A, French Ligue 1,
+  English PL / Championship / League One / **League Two** / Conference,
+  **Scottish Premiership / Championship / League One / League Two**,
+  German Bundesliga / 2. Bundesliga, Spanish La Liga / Segunda,
+  Italian Serie A / **Serie B**, French Ligue 1 / **Ligue 2**,
   Dutch Eredivisie, Belgian Pro League, Portuguese Liga, Greek Super League,
   Turkish Super Lig.
 - **Sparse** (one file, results + odds only): Argentine Liga, Brazilian Serie
@@ -237,9 +261,21 @@ if you want a different run time.
   Veikkausliiga, Irish Premier Division, Japanese J-League, Mexican Liga MX,
   Norwegian Eliteserien, Russian Premier League, Swedish Allsvenskan, USA MLS.
 
+The Scottish and second-tier leagues (in bold) were added because Toto coupons
+draw on them heavily; without models those rows fell back to 1/3-1/3-1/3, which
+is the worst possible input to a Poisson-binomial.
+
 Summer coverage (European off-season): MLS, Liga MX, Irish Premier Division,
 Brazil, Argentina, Japan, China, Norway, Sweden, Finland all run through the
 European summer.
+
+Adding a league: register it in `LEAGUE_REGISTRY` and `FETCH_SOURCES`, then
+
+```bash
+python scripts/fetch_latest.py --only <league> --backfill 7
+python scripts/refresh_data.py
+python scripts/train_one.py --league <league> --engine xgb   # then lgbm
+```
 
 ## Market-anchored predictions
 
