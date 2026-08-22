@@ -1,7 +1,7 @@
 # Football Predictor
 
 Per-league XGBoost + LightGBM ensembles for 1X2, Over/Under (1.5/2.5/3.5),
-BTTS, Half-Time and xG markets across 35 leagues. All historical match data
+BTTS, Half-Time and xG markets across 38 leagues. All historical match data
 comes from [football-data.co.uk](https://www.football-data.co.uk). Models are
 calibrated (isotonic / Platt chosen per market) and averaged across engines at
 prediction time.
@@ -246,7 +246,7 @@ if you want a different run time.
 
 ## League coverage
 
-35 leagues, split into two format families:
+38 leagues, split into two format families:
 
 - **Rich** (full columns: shots, corners, fouls, cards, HT results) → trains
   HT1X2 and HT O/U 0.5 in addition to the core markets:
@@ -259,9 +259,10 @@ if you want a different run time.
 - **Sparse** (one file, results + odds only): Argentine Liga, Brazilian Serie
   A, Swiss Super League, Danish Superliga, Chinese Super League, Finnish
   Veikkausliiga, Irish Premier Division, Japanese J-League, Mexican Liga MX,
-  Norwegian Eliteserien, Russian Premier League, Swedish Allsvenskan, USA MLS.
+  Norwegian Eliteserien, Russian Premier League, Swedish Allsvenskan, USA MLS,
+  **Austrian Bundesliga**, **Polish Ekstraklasa**, **Romanian Superliga**.
 
-The Scottish and second-tier leagues (in bold) were added because Toto coupons
+The leagues in bold were added because Toto coupons
 draw on them heavily; without models those rows fell back to 1/3-1/3-1/3, which
 is the worst possible input to a Poisson-binomial.
 
