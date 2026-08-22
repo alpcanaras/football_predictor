@@ -58,6 +58,9 @@ LEAGUE_REGISTRY = {
     'russian':             {'type': 'sparse', 'delimiter': ',', 'display_name': 'Russian Premier League'},
     'swedish':             {'type': 'sparse', 'delimiter': ',', 'display_name': 'Swedish Allsvenskan'},
     'usa':                 {'type': 'sparse', 'delimiter': ',', 'display_name': 'USA MLS'},
+    'austria':             {'type': 'sparse', 'delimiter': ',', 'display_name': 'Austrian Bundesliga'},
+    'poland':              {'type': 'sparse', 'delimiter': ',', 'display_name': 'Polish Ekstraklasa'},
+    'romania':             {'type': 'sparse', 'delimiter': ',', 'display_name': 'Romanian Superliga'},
 }
 
 # =============================================================================
@@ -104,6 +107,9 @@ FETCH_SOURCES = {
     'russian':             {'url': 'https://www.football-data.co.uk/new/RUS.csv',     'target': 'RUS.csv'},
     'swedish':             {'url': 'https://www.football-data.co.uk/new/SWE.csv',     'target': 'SWE-2.csv'},
     'usa':                 {'url': 'https://www.football-data.co.uk/new/USA.csv',     'target': 'USA.csv'},
+    'austria':             {'url': 'https://www.football-data.co.uk/new/AUT.csv',     'target': 'AUT.csv'},
+    'poland':              {'url': 'https://www.football-data.co.uk/new/POL.csv',     'target': 'POL.csv'},
+    'romania':             {'url': 'https://www.football-data.co.uk/new/ROU.csv',     'target': 'ROU.csv'},
 }
 
 
@@ -126,6 +132,9 @@ SPARSE_COUNTRY = {
     'russian':   'Russia',
     'swedish':   'Sweden',
     'usa':       'USA',
+    'austria':   'Austria',
+    'poland':    'Poland',
+    'romania':   'Romania',
 }
 
 

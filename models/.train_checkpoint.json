@@ -1,11 +1,9 @@
 {
   "done": [
-    "british_conference|1x2|xgb",
-    "british_conference|btts|xgb",
-    "british_conference|ou15|xgb",
-    "british_conference|ou25|xgb",
-    "british_conference|ou35|xgb",
-    "british_conference|xg|xgb|Away",
-    "british_conference|xg|xgb|Home"
+    "scottish_prem|1x2|xgb",
+    "scottish_prem|btts|xgb",
+    "scottish_prem|ou15|xgb",
+    "scottish_prem|ou25|xgb",
+    "scottish_prem|ou35|xgb"
   ]
 }
