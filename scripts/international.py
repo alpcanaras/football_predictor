@@ -417,13 +417,79 @@ def cmd_predict(args):
           f"vs {args.away} {ratings[args.away]:.0f}")
 
 
+def cmd_rolling(args):
+    """Rolling out-of-sample evaluation over thousands of matches.
+
+    The three-tournament backtest is only ~180 matches, where the standard
+    error on log-loss (~0.05) dwarfs any realistic model difference — it cannot
+    tell two models apart. This walks forward instead: refit the goal model
+    every `--refit-months` on prior data only and score the following window,
+    which is how MIX_MULTINOM was chosen.
+    """
+    df = load_results()
+    _, hist = run_elo(df)
+    start = pd.Timestamp(args.since)
+    ev = hist[hist['date'] >= start]
+    if ev.empty:
+        sys.exit(f"No matches since {args.since}")
+
+    edges = list(pd.date_range(start, ev['date'].max() + pd.Timedelta(days=1),
+                               freq=f'{args.refit_months}MS'))
+    edges += [ev['date'].max() + pd.Timedelta(days=1)]
+
+    P, Y, T = [], [], []
+    for a, b in zip(edges[:-1], edges[1:]):
+        chunk = ev[(ev['date'] >= a) & (ev['date'] < b)]
+        train = hist[hist['date'] < a]
+        if chunk.empty or len(train[train['date'] >= '2010-01-01']) < 500:
+            continue
+        model = GoalModel().fit(train)
+        for _, m in chunk.iterrows():
+            p = model.market_probs(m['elo_home_pre'], m['elo_away_pre'],
+                                   neutral=bool(m['neutral']),
+                                   friendly=(m['tournament'] == 'Friendly'))
+            P.append([p['p_home'], p['p_draw'], p['p_away']])
+            gd = m['home_score'] - m['away_score']
+            Y.append(0 if gd > 0 else (1 if gd == 0 else 2))
+            T.append(m['tournament'])
+    P = np.array(P); Y = np.array(Y); T = np.array(T)
+    if not len(Y):
+        sys.exit("Nothing to evaluate.")
+
+    def report(label, mask):
+        p, y = P[mask], Y[mask]
+        if len(y) < 30:
+            return
+        ll = -np.log(np.clip(p[np.arange(len(y)), y], 1e-12, None))
+        top2 = np.mean([y[i] in np.argsort(p[i])[-2:] for i in range(len(y))])
+        oh = np.zeros_like(p); oh[np.arange(len(y)), y] = 1.0
+        print(f"  {label:<22} {len(y):>6} {(p.argmax(1) == y).mean():>7.1%} "
+              f"{top2:>7.1%} {ll.mean():>9.4f} {((p - oh) ** 2).sum(1).mean():>7.3f} "
+              f"{p[:, 1].mean():>6.1%} {(y == 1).mean():>6.1%}")
+
+    print(f"\n  ROLLING EVALUATION since {args.since}, refit every "
+          f"{args.refit_months} month(s), MIX_MULTINOM={MIX_MULTINOM}\n")
+    print(f"  {'segment':<22} {'N':>6} {'Acc':>7} {'Top2':>7} {'LogLoss':>9} "
+          f"{'Brier':>7} {'pDraw':>6} {'actD':>6}")
+    print('  ' + '-' * 76)
+    report('ALL', np.ones(len(Y), bool))
+    major = {'FIFA World Cup', 'UEFA Euro', 'Copa América',
+             'African Cup of Nations', 'AFC Asian Cup', 'Gold Cup'}
+    report('major tournaments', np.isin(T, list(major)))
+    report('qualifiers', pd.Series(T).str.contains('qualification').to_numpy())
+    report('friendlies', T == 'Friendly')
+    print("\n  Top-2 is what a Toto 'double' covers, so it matters as much as "
+          "accuracy here.")
+
+
 def cmd_backtest(_args):
     """Leak-free backtest on WC 2018, WC 2022, Euro 2024.
 
     Elo pre-match ratings are inherently leak-free (chronological pass).
     The goal model is refit using only matches before each tournament.
     Note: knockout scores in the dataset include extra time, which slightly
-    inflates decisive results vs a 90-minute 1X2 market.
+    inflates decisive results vs a 90-minute 1X2 market. With ~180 matches
+    this is a reference point, not a way to compare models — use `rolling`.
     """
     df = load_results()
     _, hist = run_elo(df)
@@ -660,12 +726,18 @@ def main():
 
     sub.add_parser('backtest', help='Backtest on WC 2018/2022 + Euro 2024')
 
+    p_roll = sub.add_parser(
+        'rolling', help='Rolling out-of-sample evaluation (thousands of matches)')
+    p_roll.add_argument('--since', default='2015-01-01')
+    p_roll.add_argument('--refit-months', type=int, default=12)
+
     p_wc = sub.add_parser('wc2026', help='Predict all WC 2026 group fixtures')
     p_wc.add_argument('--sims', type=int, default=20000)
 
     args = parser.parse_args()
     {'update': cmd_update, 'ratings': cmd_ratings, 'predict': cmd_predict,
-     'backtest': cmd_backtest, 'wc2026': cmd_wc2026}[args.command](args)
+     'backtest': cmd_backtest, 'rolling': cmd_rolling,
+     'wc2026': cmd_wc2026}[args.command](args)
 
 
 if __name__ == '__main__':
