@@ -39,14 +39,12 @@ DIV_TO_LEAGUE = {
     if (m := re.search(r'/mmz4281/\{season\}/(\w+)\.csv', src['url']))
 }
 
-# Country name (new_league_fixtures.csv) -> league key
-COUNTRY_TO_LEAGUE = {
-    'Argentina': 'argentina', 'Brazil': 'BRAZIL', 'China': 'chn',
-    'Denmark': 'DANSK', 'Finland': 'fin', 'Ireland': 'irish',
-    'Japan': 'japan', 'Mexico': 'mexico', 'Norway': 'norsk',
-    'Russia': 'russian', 'Sweden': 'swedish', 'Switzerland': 'CH',
-    'USA': 'usa',
-}
+# Country name (new_league_fixtures.csv) -> league key. Derived from
+# config.SPARSE_COUNTRY rather than maintained by hand — a hand-kept copy
+# silently missed every sparse league added after it was written, so their
+# fixtures never appeared in the feed.
+COUNTRY_TO_LEAGUE = {country: league
+                     for league, country in config.SPARSE_COUNTRY.items()}
 
 
 def fetch(force: bool = False) -> None:

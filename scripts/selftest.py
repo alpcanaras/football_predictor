@@ -124,6 +124,95 @@ def check_team_leakage(df: pd.DataFrame, window_days: int = 60) -> None:
                f'{len(pairs)} clubs active in the last {window_days}d')
 
 
+def check_config_wiring() -> None:
+    """Every registered league must be wired everywhere it is consumed.
+
+    These mappings live in different modules, and a league added to one but
+    not another fails silently (its fixtures never map, its payloads are never
+    validated). Austria/Poland/Romania were exactly this: registered and
+    trained, but missing from the feed's country mapping.
+    """
+    from scripts import fixtures as fx
+    problems = []
+    for lg, info in config.LEAGUE_REGISTRY.items():
+        if lg not in config.FETCH_SOURCES:
+            problems.append(f'{lg}: no FETCH_SOURCES entry')
+            continue
+        if info['type'] == 'sparse':
+            country = config.SPARSE_COUNTRY.get(lg)
+            if not country:
+                problems.append(f'{lg}: missing from SPARSE_COUNTRY '
+                                '(payload validation disabled)')
+            elif fx.COUNTRY_TO_LEAGUE.get(country) != lg:
+                problems.append(f'{lg}: feed country mapping broken')
+    extra = set(config.FETCH_SOURCES) - set(config.LEAGUE_REGISTRY)
+    if extra:
+        problems.append(f'FETCH_SOURCES has unregistered keys: {sorted(extra)}')
+    if problems:
+        record(FAIL, 'league config is fully wired', '; '.join(problems[:4]))
+    else:
+        record(PASS, 'league config is fully wired',
+               f'{len(config.LEAGUE_REGISTRY)} leagues x fetch/validate/feed')
+
+
+def check_name_resolution() -> None:
+    """Aliases and fuzzy matching keep resolving what coupons rely on."""
+    from scripts import toto
+    cases = [('psg', 'Paris SG'), ('bvb', 'Dortmund'),
+             ('gladbach', "M'gladbach"), ('atleti', 'Ath Madrid'),
+             ('spurs', 'Tottenham'), ('forest', "Nott'm Forest")]
+    bad = [f'{a}->{toto.apply_alias(a)}' for a, want in cases
+           if toto.apply_alias(a) != want]
+    ic = toto._load_intl()
+    for typed, want in [('curacao', 'Curaçao'), ('usa', 'United States'),
+                        ('turkiye', 'Turkey'), ('korea', 'South Korea')]:
+        got = toto._intl_name(typed, ic)
+        if got != want:
+            bad.append(f'{typed}->{got}')
+    if bad:
+        record(FAIL, 'name aliases resolve', '; '.join(bad))
+    else:
+        record(PASS, 'name aliases resolve',
+               f'{len(cases)} club + 4 national shorthands')
+
+
+def check_tracker() -> None:
+    """Save -> grade roundtrip against real recent results, in a temp dir."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ['FOOTBALL_PREDICTOR_TOTO_DIR'] = tmp
+        try:
+            from scripts import track
+            df = pd.read_csv(config.PROCESSED_DATA_FILE,
+                             usecols=['Date', 'HomeTeam', 'AwayTeam'],
+                             parse_dates=['Date'])
+            # Grading looks BACK_DAYS back from the save date (today), so the
+            # sample must be that recent — not merely recent relative to the
+            # data, which can lag.
+            cutoff = (pd.Timestamp.today().normalize()
+                      - pd.Timedelta(days=track.ResultLookup.BACK_DAYS - 1))
+            recent = df[df['Date'] >= cutoff]
+            if len(recent) < 4:
+                record(WARN, 'coupon tracker roundtrip',
+                       f'no matches since {cutoff.date()} to grade against '
+                       '(data is stale)')
+                return
+            matches = [{'home': r.HomeTeam, 'away': r.AwayTeam, 'p1': 0.5,
+                        'px': 0.3, 'p2': 0.2, 'pick': '1', 'src': 'model'}
+                       for r in recent.head(4).itertuples()]
+            track.save_coupon('turkish', matches, budget=1, threshold=2,
+                              p_threshold=0.5, note='selftest')
+            g = track.grade_all()[0]
+            ok = g['graded'] == 4 and 0 <= g['correct'] <= 4
+            record(PASS if ok else FAIL, 'coupon tracker roundtrip',
+                   f"graded {g['graded']}/4, {g['correct']} correct")
+        except Exception as e:
+            record(FAIL, 'coupon tracker roundtrip',
+                   f'{type(e).__name__}: {e}')
+        finally:
+            os.environ.pop('FOOTBALL_PREDICTOR_TOTO_DIR', None)
+
+
 # --------------------------------------------------------------- 4. toto maths
 def check_toto_math() -> None:
     from scripts import toto
@@ -297,11 +386,14 @@ def main() -> int:
     print('  FOOTBALL PREDICTOR — SELF TEST')
     print('=' * 64)
 
+    check_config_wiring()
     check_league_files()
     df = check_processed_leagues()
     check_freshness(df)
     check_team_leakage(df)
     check_toto_math()
+    check_name_resolution()
+    check_tracker()
     check_models(args.quick)
     check_international()
     if not args.quick:
