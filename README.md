@@ -41,9 +41,15 @@ For pools games (Turkish Spor Toto: 15 matches, prize 12+; German 13er Wette:
 13 matches, prize 10+). Enter the week's matches and bookmaker 1X2 odds; it
 returns calibrated probabilities, your single-column chance of hitting each
 prize tier, and — given a column budget — the optimal **system play** (which
-least-predictable matches to cover with doubles/triples). The maths is exact
-(Poisson-binomial over independent matches); coverage is allocated greedily by
-threshold-probability gained per column spent.
+least-predictable matches to cover with doubles/triples).
+
+The maths is exact: a Poisson-binomial over independent matches (verified
+against a 200k-run Monte Carlo). Coverage is chosen by seeding with a
+marginal-gain greedy pass and then hill-climbing over single-match and
+pairwise changes, which matches brute-force optimum on every instance small
+enough to enumerate. Plain greedy under-spends the budget badly — it would
+leave 27 of 48 paid-for columns unused — so on a 13-match German coupon this
+lifts P(≥10) from 21.7% to 24.4% at a budget of 64, for the same money.
 
 Where a row has no odds the model fills the probabilities in: **club** teams via
 the league ensembles, **national** teams (World Cup weeks) via the international
@@ -67,6 +73,38 @@ Key fact the tool exploits: both games allow exactly **3 misses** (12/15 and
 10/13), so difficulty is about per-match predictability — German coupons draw
 from harder lower divisions, which is why 10/13 is tougher than 12/15. Spend
 coverage on the toss-ups, bank the favourites.
+
+### Did it actually work? (coupon history)
+
+Every tier probability rests on the per-match numbers being honest, so the app
+can record what it predicted and grade it once the results are in — **💾 Save
+to history** after an analysis, then **📈 History & calibration**.
+
+```bash
+python scripts/track.py list          # saved coupons
+python scripts/track.py grade         # correct vs expected, threshold hit rate
+python scripts/track.py calibration   # claimed confidence vs realised
+```
+
+The benchmark to watch is **correct vs expected**: expected is the
+Poisson-binomial mean, so landing consistently below it means the
+probabilities are optimistic rather than you being unlucky. As measured on
+1,960 out-of-sample matches the club models are close to honest — top pick
+claimed 48.8% and realised 46.7% (95% CI ±2.2), draws 25.8% predicted against
+26.5% actual.
+
+## Health check
+
+```bash
+./venv/bin/python scripts/selftest.py           # everything
+./venv/bin/python scripts/selftest.py --quick   # skip the app boot
+```
+
+Verifies each league file really holds that league's matches, flags stale
+leagues, checks no club is in two leagues at once, tests the Toto maths
+against Monte Carlo and brute force, loads and predicts with every league's
+models, fits the international model, and boots the Streamlit app against a
+scratch coupon directory. Worth running after any data refresh or retrain.
 
 **One command for everything coming up** (club fixtures with live odds
 anchoring + today's World Cup matches):
@@ -138,6 +176,26 @@ python scripts/fetch_latest.py --apply --refresh-processed
 python scripts/fetch_latest.py --only british_pl,italian --apply
 ```
 
+In the app, the sidebar's **🔄 Update league data** does steps 2 and 3 in one
+click and hot-reloads without a restart, reporting per-league outcomes.
+
+**Payload validation (do not remove).** football-data.co.uk runs Apache with
+MultiViews: when a season's file does not exist yet, the server may answer
+with a *similar* file and HTTP 200. This is not hypothetical — `EC.csv`
+(English Conference) was served in answer to `E0.csv` and written into
+`data/british_pl/`, putting 12 Conference matches and 23 non-league clubs into
+the Premier League. Every download is now checked to really be the league
+requested (rich leagues by the URL's `Div` code, sparse ones by
+`config.SPARSE_COUNTRY`), and a rejected payload is deleted from staging so it
+can never be promoted. `SWE.csv` (Sweden) and `SWZ.csv` (Switzerland) are one
+typo apart, so this matters beyond the case that triggered it. A season that
+is genuinely not published yet now reports `not-published` and the existing
+data is kept.
+
+Statuses worth reading in the report: `OK`, `not-published` (season has not
+started), `wrong-div:` / `wrong-country:` (payload rejected — investigate),
+`payload-not-csv`.
+
 ### Activating the daily LaunchAgent
 
 The plist is **not** loaded by default. Once you are happy running the script
@@ -189,11 +247,20 @@ European summer.
 odds whenever the fixture appears in football-data.co.uk's upcoming-fixtures
 feed (downloaded automatically to `data/_fixtures/`, cached 12h). Blend
 weights live in `models/blend_weights.json` and were fitted out-of-sample by
-[`scripts/blend.py`](scripts/blend.py) — on Feb–May 2026 data the
-market-anchored blend scores 1.003 log-loss vs 1.033 for the model alone
-(1X2), 0.68 vs 0.69 for O/U 2.5. Per-league weights were tested and did not
-beat global weights (kept in `evaluate` for future re-checks). Refit after
-each retrain:
+[`scripts/blend.py`](scripts/blend.py).
+
+**The model does not beat the bookmaker, and the weights say so.** Re-checked
+on 684 matches that are out-of-sample for *both* the per-league ensembles and
+the pooled model (Jun–Aug 2026): the de-vigged book scores 1.0032 log-loss,
+the production model 1.0334, and fitting the log-pool puts **zero** weight on
+the model — giving it weight makes the held-out half worse. So where a fixture
+has odds, the numbers you see are essentially the market's, tempered. The
+model earns its keep on matches with **no** odds, and in Toto, where the
+opponent is the crowd rather than the book. Treat a large "Model − Book" gap
+as disagreement worth investigating, not as a value bet.
+
+Per-league weights were tested and did not beat global weights (kept in
+`evaluate` for future re-checks). Refit after each retrain:
 
 ```bash
 python scripts/blend.py evaluate   # tune/eval split report (model vs book vs DC)
@@ -225,8 +292,16 @@ python scripts/pooled.py evaluate                     # pooled vs per-league vs 
 National teams are handled by a separate model in
 [`scripts/international.py`](scripts/international.py): a tournament-weighted
 Elo (eloratings.net K-scheme, goal-margin multiplier, neutral-venue handling)
-over `data/global/international.csv`, plus a Poisson goal model that converts
-Elo differences into 1X2 / O-U / BTTS probabilities.
+over `data/global/international.csv`, feeding two heads whose 1X2 outputs are
+log-pooled (`MIX_MULTINOM = 0.60` on the direct head):
+
+- a **Poisson score grid** with the Dixon-Coles low-score correction, which
+  also gives O/U and BTTS;
+- a **softmax regression straight to 1X2**, free of the Poisson bottleneck and
+  so able to shape the draw probability directly.
+
+The grid is then tilted so its own 1X2 marginals match the blend, keeping O/U
+and BTTS coherent with the 1X2 actually reported.
 
 ```bash
 # Refresh results + upcoming WC fixtures from the martj42 GitHub dataset
@@ -245,10 +320,28 @@ python scripts/international.py backtest
 python scripts/international.py wc2026
 ```
 
-Backtest reference (group + knockout, pre-tournament data only): 54.2%
-accuracy / 1.022 log-loss across WC 2018, WC 2022 and Euro 2024 — on par with
-the club models. Knockout scores in the dataset include extra time, which
-slightly biases the evaluation against draws.
+`backtest` reports the three-tournament reference (WC 2018, WC 2022, Euro
+2024, pre-tournament data only) — around 1.02 log-loss and ~79% top-2. Note
+that 179 matches cannot separate two models: the standard error on log-loss
+there is ~0.05, larger than any realistic improvement. The blend above was
+chosen instead on a **rolling 11,076-match evaluation** (all internationals
+from 2015, goal model refit yearly on prior data only):
+
+| model | log-loss | top-2 |
+|---|---|---|
+| Poisson only | 0.8778 | 82.8% |
+| + Dixon-Coles tau | 0.8770 | 83.1% |
+| **60/40 blend (shipped)** | **0.8743** | **83.7%** |
+
+Paired *t* = +4.42 against tau alone; significant on qualifiers and
+friendlies, neutral on major tournaments, never worse. Top-2 is what a Toto
+"double" covers, hence the emphasis. Knockout scores in the dataset include
+extra time, which slightly biases evaluation against draws.
+
+`wc2026` seeds the group simulation with results already played and simulates
+only the remaining fixtures, sampling scorelines from the corrected grid. Once
+the knockouts begin it says so rather than pretending group advancement still
+applies.
 
 ## Setup
 
