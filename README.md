@@ -324,6 +324,31 @@ python scripts/pooled.py train --markets 1x2 --cutoff 2026-02-01  # + evaluate
 python scripts/pooled.py evaluate                     # pooled vs per-league vs book
 ```
 
+## European club competitions (UCL / UEL / Conference)
+
+Cross-league club matches cannot use the per-league models: their Elo starts
+every league at 1500, so two leagues' ratings sit on different rulers — left
+unguarded that made Real Madrid an *underdog* at Galatasaray. Coupon rows
+whose clubs are in different leagues now route to
+[`scripts/clubs_europe.py`](scripts/clubs_europe.py) (`Src: euro`): every
+European club on one ruler via [clubelo.com](http://clubelo.com)'s free API
+(596 clubs, 55 countries, Turkish clubs and small-nation qualifier sides
+included), with the Elo-difference → goals/1X2 curve fitted on our own
+domestic matches joined to monthly rating snapshots. Same two-head design the
+international module validated. Held-out sanity: 1.022 log-loss / 75.8% top-2
+on ~4k matches, and Galatasaray–Real Madrid prices at 20/24/56 at home.
+
+```bash
+python scripts/clubs_europe.py update      # refresh ratings + monthly history
+python scripts/clubs_europe.py ratings
+python scripts/clubs_europe.py predict --home Celtic --away "Bayern Munich"
+python scripts/clubs_europe.py backtest
+```
+
+UCL group-stage ties usually have odds anyway — type them into the coupon and
+they dominate as usual. The euro model earns its keep on qualifiers and
+Conference-League rows where odds are a chore to find.
+
 ## International / World Cup module
 
 National teams are handled by a separate model in

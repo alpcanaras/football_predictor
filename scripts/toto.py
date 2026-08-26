@@ -95,6 +95,10 @@ def match_probs(row, ctx):
         model = _model_probs(row, ctx)        # club ensemble [1,X,2] or None
         if model is not None:
             kind = 'model'
+    if model is None:                          # cross-league European clubs
+        euro = _euro_probs(row.get('home'), row.get('away'))
+        if euro is not None:
+            model, kind = euro, 'euro'
     if model is None:                          # national-team fallback
         intl = _intl_probs(row.get('home'), row.get('away'))
         if intl is not None:
@@ -113,11 +117,21 @@ def match_probs(row, ctx):
 
 
 def _model_probs(row, ctx):
-    """Look up the home team's league, build features, predict 1X2 -> [1,X,2]."""
+    """Look up the home team's league, build features, predict 1X2 -> [1,X,2].
+
+    Both clubs must be in the SAME league: per-league Elo starts every league
+    at 1500, so ratings from two leagues are on different rulers and a
+    cross-league prediction (a Champions League tie, say) would be garbage —
+    it silently made Real Madrid an underdog at Galatasaray. Cross-league
+    pairs return None here and fall through to the European club model.
+    """
     from scripts import utils
     home = _fuzzy(row['home'], ctx['teams'])
     away = _fuzzy(row['away'], ctx['teams'])
     if not home or not away:
+        return None
+    t2l = ctx.get('team_to_league') or {}
+    if t2l.get(home) != t2l.get(away):
         return None
     try:
         from scripts import predict as predict_mod
@@ -225,6 +239,24 @@ CLUB_ALIASES = {
 def apply_alias(name):
     """Canonical club name for a common shorthand, or the name unchanged."""
     return CLUB_ALIASES.get(_fold(name), name)
+
+
+# --- European club (UCL / UEL / Conference) fallback -----------------------
+def _euro_probs(home, away, neutral=False):
+    """Cross-league club 1X2 via clubelo global ratings, or None.
+
+    Covers rows the per-league models cannot: the two clubs are in different
+    leagues (Champions League etc.), or in a league we don't model. Sits
+    before the national-team fallback so 'Galatasaray - Real Madrid' is
+    priced as clubs, not misread as countries.
+    """
+    if home is None or away is None:
+        return None
+    try:
+        from scripts import clubs_europe
+        return clubs_europe.predict_1x2(str(home), str(away), neutral=neutral)
+    except Exception:
+        return None
 
 
 # --- national-team (World Cup / international) fallback --------------------

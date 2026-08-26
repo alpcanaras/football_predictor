@@ -845,8 +845,9 @@ with tab_toto:
                      hide_index=True)
         st.caption("Fair = fair decimal odds for the pick (1 ÷ probability) "
                    "— bet it only if a book pays more. Src: **blend** "
-                   "(odds+model) · **odds** · **model** (club) · **intl** "
-                   "(World Cup model) · **no data** (defaulted to 1∕3 each).")
+                   "(odds+model) · **odds** · **model** (club, same league) · "
+                   "**euro** (cross-league clubs — UCL/UEL, via global club "
+                   "Elo) · **intl** (national teams) · **no data** (1∕3 each).")
         if res['unmatched']:
             st.warning("Couldn't match — defaulted to 1/3 each. Check the "
                        "spelling, or add odds (`… 2.10 3.30 3.40`):\n\n- "

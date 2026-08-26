@@ -213,6 +213,29 @@ def check_tracker() -> None:
             os.environ.pop('FOOTBALL_PREDICTOR_TOTO_DIR', None)
 
 
+def check_euro_clubs() -> None:
+    """The cross-league (UCL/UEL) fallback resolves and prices sanely."""
+    try:
+        from scripts import clubs_europe as ce
+        ratings = ce.current_ratings(fetch_if_stale=False)
+        if ratings is None:
+            record(WARN, 'European club model',
+                   'no clubelo snapshot cached — run clubs_europe.py update')
+            return
+        bad = [n for n in ('Galatasaray', 'Real Madrid', 'Celtic', 'Bayern')
+               if ce.resolve(n, ratings) is None]
+        if bad:
+            record(FAIL, 'European club model', f'unresolved: {bad}')
+            return
+        p = ce.predict_1x2('Celtic', 'Bayern Munich')
+        sane = p is not None and p[2] > 0.5 and abs(p.sum() - 1) < 1e-6
+        record(PASS if sane else FAIL, 'European club model',
+               f'{len(ratings)} clubs; Celtic-Bayern away '
+               f'{p[2]:.0%}' if p is not None else 'prediction failed')
+    except Exception as e:
+        record(FAIL, 'European club model', f'{type(e).__name__}: {e}')
+
+
 # --------------------------------------------------------------- 4. toto maths
 def check_toto_math() -> None:
     from scripts import toto
@@ -393,6 +416,7 @@ def main() -> int:
     check_team_leakage(df)
     check_toto_math()
     check_name_resolution()
+    check_euro_clubs()
     check_tracker()
     check_models(args.quick)
     check_international()
