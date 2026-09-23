@@ -412,3 +412,55 @@ python3.11 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
+
+## Ticket maker
+
+`optimize_system` says *which* matches to cover; the ticket maker writes the
+ticket you actually fill in — `1`, `1X`, `12`, `1X2` per match — for a budget
+in columns. It chooses the *symbols*, not just how many: a double is whichever
+pair is best, which is often `12` (when the draw is the least likely outcome)
+and, with crowd data, sometimes not the two most likely outcomes at all.
+
+```bash
+python scripts/ticket.py --coupon coupon.csv --game turkish --budget 100
+python scripts/ticket.py --coupon coupon.csv --budget 100 \
+       --objective payout --crowd crowd.txt --sweep
+```
+
+Verified against brute-force enumeration over every symbol combination: it
+reaches the exact optimum. The hit objective is scored with the closed-form
+Poisson-binomial rather than simulation — optimising a sampled estimate chased
+Monte-Carlo noise into tickets that only *looked* better.
+
+### Playing the crowd, not the bookmaker
+
+Everyone reaching the threshold splits the pot, so the prize depends on how
+many others got there. Back the field's favourites and you win in the weeks
+thousands of others win too; the weeks worth winning are the ones the crowd
+loses. Given crowd percentages (`68/21/11` per match — the *oynanma yüzdesi*,
+hand-entered), the payout objective simulates result-weeks, works out what
+fraction of the field clears the threshold in each, and leans toward outcomes
+you rate above the field.
+
+Your share is `1 / (other winners + 1)` — that `+1` caps the prize at the whole
+pot. Without it the objective chases weeks when the field is wiped out and the
+implied payout runs to infinity, which produced a ticket winning **1% of the
+time instead of 21%**.
+
+Even bounded, pure expected-value maximisation is practically unplayable, so
+`--tilt` controls the lean (default **0.5**). A measured sweep on a real coupon:
+
+| tilt | P(≥12) | expected payout |
+|---|---|---|
+| 0.0 | 21.2% | 1.00x |
+| 0.5 | 18.4% | 1.21x |
+| 0.65 | 18.4% | 1.21x |
+| 0.8 | 2.4% | 2.31x ← cliff |
+| 1.0 | 1.1% | 2.53x |
+
+Below the cliff you buy ~20–30% more expected payout for a few points of hit
+rate. Above it you are buying a lottery ticket. `--sweep` prints this table for
+your own coupon, since the cliff moves with the matches and the crowd.
+
+This raises expected payout, not hit rate, and it does not beat the rake — a
+pool keeping 40–55% is a bigger opponent than the crowd ever is.

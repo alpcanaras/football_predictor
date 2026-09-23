@@ -236,6 +236,33 @@ def check_euro_clubs() -> None:
         record(FAIL, 'European club model', f'{type(e).__name__}: {e}')
 
 
+def check_ticket_engine() -> None:
+    """The ticket maker must reach the true optimum, not just a good guess."""
+    import itertools as it
+    from scripts import ticket, toto
+    rng = np.random.default_rng(23)
+    worst = 0.0
+    for _ in range(3):
+        n = int(rng.integers(5, 7))
+        thr, budget = n - 2, int(rng.choice([8, 12, 16]))
+        probs = [rng.dirichlet([4.0, 3.0, 3.0]) for _ in range(n)]
+        res = ticket.build(probs, thr, budget, restarts=3)
+        best = 0.0
+        for combo in it.product(ticket.ALL_MASKS, repeat=n):
+            if ticket.columns(combo) > budget:
+                continue
+            q = [sum(probs[i][o] for o in range(3) if (combo[i] >> o) & 1)
+                 for i in range(n)]
+            best = max(best, toto.prob_at_least(q, thr))
+        worst = max(worst, best - res['p_hit'])
+    labels_ok = all(ticket.MASK_LABEL[m] for m in res['masks'])
+    if worst < 1e-9 and labels_ok:
+        record(PASS, 'ticket maker reaches the optimum',
+               'exact on 3 brute-forced instances')
+    else:
+        record(FAIL, 'ticket maker reaches the optimum', f'shortfall {worst:.6f}')
+
+
 # --------------------------------------------------------------- 4. toto maths
 def check_toto_math() -> None:
     from scripts import toto
@@ -417,6 +444,7 @@ def main() -> int:
     check_toto_math()
     check_name_resolution()
     check_euro_clubs()
+    check_ticket_engine()
     check_tracker()
     check_models(args.quick)
     check_international()

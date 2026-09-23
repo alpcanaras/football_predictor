@@ -904,6 +904,80 @@ with tab_toto:
                 "this is for choosing a budget you are happy to lose, not for "
                 "finding a profitable one.")
 
+        # --- the actual ticket: which symbols to fill in ---------------------
+        with st.expander("🎫 Build my ticket", expanded=True):
+            from scripts import ticket as ticket_mod
+            st.caption(
+                "Turns the coupon and your budget into the ticket you actually "
+                "fill in — `1`, `1X`, `12`, `1X2` per match. Optionally paste "
+                "the crowd percentages (*oynanma yüzdesi*) as `68/21/11` per "
+                "line, in coupon order, and it will also lean toward outcomes "
+                "the field is under-backing — everyone with "
+                f"{threshold}+ splits the pot, so the weeks worth winning are "
+                "the ones the crowd loses.")
+            tc1, tc2 = st.columns([2, 3])
+            tilt = tc1.slider(
+                "Crowd tilt", 0.0, 1.0, ticket_mod.DEFAULT_TILT, 0.05,
+                key=f'tilt_{game}',
+                help="0 = pure hit chance. Higher leans into unpopular "
+                     "outcomes for a bigger share when you win. Past ~0.75 "
+                     "the hit rate collapses — check the trade-off table.")
+            crowd_txt = tc2.text_area(
+                "Crowd % per match (optional)", key=f'crowd_{game}', height=110,
+                placeholder="68/21/11\n55/25/20\n…")
+            crowd_arr = ticket_mod.parse_crowd(crowd_txt)
+            if crowd_txt.strip() and (crowd_arr is None
+                                      or len(crowd_arr) != len(out)):
+                st.warning(f"Need one `1/X/2` line per match — got "
+                           f"{0 if crowd_arr is None else len(crowd_arr)} for "
+                           f"{len(out)} matches. Ignoring the crowd numbers.")
+                crowd_arr = None
+
+            bt1, bt2 = st.columns([1, 1])
+            if bt1.button("🎫 Build ticket", key=f'mk_{game}'):
+                with st.spinner("Choosing symbols…"):
+                    st.session_state[f'ticket_{game}'] = ticket_mod.build(
+                        [np.array([r['1'], r['X'], r['2']]) / 100.0
+                         for r in out],
+                        threshold, int(budget), crowd=crowd_arr, tilt=tilt)
+            if crowd_arr is not None and bt2.button("⚖️ Show trade-off",
+                                                    key=f'sw_{game}'):
+                with st.spinner("Comparing tilts…"):
+                    st.session_state[f'sweep_{game}'] = ticket_mod.sweep(
+                        [np.array([r['1'], r['X'], r['2']]) / 100.0
+                         for r in out], threshold, int(budget), crowd_arr)
+
+            tk = st.session_state.get(f'ticket_{game}')
+            if tk and len(tk['labels']) == len(out):
+                tdf = pd.DataFrame([{
+                    '#': i + 1, 'Match': out[i]['Match'],
+                    'PLAY': tk['labels'][i],
+                    'cols': ticket_mod.popcount(tk['masks'][i]),
+                    '1': out[i]['1'], 'X': out[i]['X'], '2': out[i]['2'],
+                } for i in range(len(out))])
+                st.dataframe(tdf, use_container_width=True, hide_index=True)
+                mk1, mk2, mk3 = st.columns(3)
+                mk1.metric("Columns used", f"{tk['columns']} / {int(budget)}")
+                mk2.metric(f"P(≥{threshold})", f"{tk['p_hit']:.2%}")
+                mk3.metric("Optimised for",
+                           "payout" if tk['objective'] == 'payout' else "hit")
+                st.download_button(
+                    "Download ticket", tdf.to_csv(index=False),
+                    f"ticket_{game}.csv", key=f'dl_{game}')
+
+            sw = st.session_state.get(f'sweep_{game}')
+            if sw:
+                st.markdown("**Hit chance vs payout** (payout relative to "
+                            "tilt 0, all scored on one yardstick)")
+                st.dataframe(pd.DataFrame([{
+                    'tilt': r['tilt'], f'P(≥{threshold})': f"{r['p_hit']:.2%}",
+                    'payout': f"{r['vs_base']:.2f}x",
+                    'hits every': f"{1 / max(r['p_hit'], 1e-9):.0f} wk",
+                    'ticket': r['ticket'],
+                } for r in sw]), use_container_width=True, hide_index=True)
+                st.caption("Take the largest tilt whose hit rate you can live "
+                           "with. Past the cliff it is a lottery ticket.")
+
         # --- record it, so "does this work?" becomes a number ----------------
         sv1, sv2 = st.columns([1, 3])
         note = sv2.text_input("Note (optional)", key=f'note_{game}',
