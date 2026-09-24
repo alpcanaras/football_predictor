@@ -263,6 +263,46 @@ def check_ticket_engine() -> None:
         record(FAIL, 'ticket maker reaches the optimum', f'shortfall {worst:.6f}')
 
 
+def check_season_coverage() -> None:
+    """No missing seasons in a league's history.
+
+    A gap means data was destroyed rather than simply never fetched — most
+    likely a season rollover overwriting the previous season's file, which is
+    exactly how 2025/26 vanished from fourteen leagues.
+    """
+    import glob
+    problems, checked = [], 0
+    for lg, info in config.LEAGUE_REGISTRY.items():
+        if info['type'] != 'rich':
+            continue          # cumulative files cannot gap
+        seasons = set()
+        for f in glob.glob(os.path.join(config.DATA_DIR, lg, '*.csv')):
+            try:
+                d = pd.read_csv(f, encoding='utf-8-sig', low_memory=False,
+                                on_bad_lines='skip')
+            except Exception:
+                continue
+            dc = [c for c in d.columns if c.lower() == 'date']
+            if not dc:
+                continue
+            dt_ = pd.to_datetime(d[dc[0]], dayfirst=True, errors='coerce').dropna()
+            for y in dt_.map(lambda x: x.year if x.month >= 7 else x.year - 1).unique():
+                seasons.add(int(y))
+        if not seasons:
+            continue
+        checked += 1
+        gaps = [y for y in range(min(seasons), max(seasons) + 1)
+                if y not in seasons]
+        if gaps:
+            problems.append(f'{lg}:{gaps}')
+    if problems:
+        record(FAIL, 'no missing seasons', '; '.join(problems[:5])
+               + '  — recover with fetch_latest.py --backfill')
+    else:
+        record(PASS, 'no missing seasons',
+               f'{checked} per-season leagues continuous')
+
+
 # --------------------------------------------------------------- 4. toto maths
 def check_toto_math() -> None:
     from scripts import toto
@@ -441,6 +481,7 @@ def main() -> int:
     df = check_processed_leagues()
     check_freshness(df)
     check_team_leakage(df)
+    check_season_coverage()
     check_toto_math()
     check_name_resolution()
     check_euro_clubs()

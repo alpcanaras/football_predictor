@@ -101,12 +101,11 @@ def backfill(leagues: list[str], seasons: list[str], timeout: int) -> int:
             print(f"    {lg:20} skip (no per-season URL)")
             continue
         code = os.path.basename(src['url']).replace('.csv', '')
-        current = current_season_code()
         for season in seasons:
-            # The current season belongs in the daily fetcher's target file, so
-            # tomorrow's fetch updates it in place instead of adding a twin.
-            name = src['target'] if season == current else f'{code}_{season}.csv'
-            dest = os.path.join(config.DATA_DIR, lg, name)
+            # Always season-stamped, matching _promote. Any legacy fixed-target
+            # file alongside is harmless: the loader de-duplicates on
+            # (date, teams, score).
+            dest = os.path.join(config.DATA_DIR, lg, f'{code}_{season}.csv')
             if os.path.isfile(dest):
                 print(f"    {lg:20} {season}  already have it")
                 continue
@@ -250,12 +249,28 @@ def _report(results: list[dict]) -> None:
 # -----------------------------------------------------------------------------
 # Apply staged files
 # -----------------------------------------------------------------------------
-def _promote(league: str, staged_path: str) -> str:
-    """Copy staged file into data/<league>/<target>, overwriting."""
+def _promote(league: str, staged_path: str, season: Optional[str] = None) -> str:
+    """Copy a staged file into data/<league>/.
+
+    Per-season (rich) leagues are written to a SEASON-STAMPED filename, not the
+    single fixed target. The fixed target is a live hazard: it holds whichever
+    season is current, so the first fetch after a rollover overwrites the
+    previous season and destroys it. That is not hypothetical — it silently
+    erased 2025/26 from fourteen leagues before this was fixed, and only the
+    leagues added via --backfill (which already stamped seasons) survived.
+
+    Cumulative "new" files are a single ever-growing file per league, so they
+    keep their fixed target name.
+    """
     src_cfg = config.FETCH_SOURCES[league]
     target_dir = os.path.join(config.DATA_DIR, league)
-    target_path = os.path.join(target_dir, src_cfg['target'])
     os.makedirs(target_dir, exist_ok=True)
+
+    name = src_cfg['target']
+    if season and '{season}' in src_cfg['url']:
+        code = os.path.basename(src_cfg['url']).replace('.csv', '')
+        name = f'{code}_{season}.csv'
+    target_path = os.path.join(target_dir, name)
     shutil.copy2(staged_path, target_path)
     return target_path
 
@@ -361,7 +376,7 @@ def main() -> int:
         for r in results:
             if r['status'] != 'OK':
                 continue
-            tgt = _promote(r['league'], r['staged'])
+            tgt = _promote(r['league'], r['staged'], season=season)
             promoted.append((r['league'], tgt))
         print()
         print(f"  Promoted {len(promoted)} files into data/<league>/")

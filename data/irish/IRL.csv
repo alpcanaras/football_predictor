@@ -2696,3 +2696,27 @@ Ireland,Premier Division,2026,07/08/2026,19:45,Galway,Drogheda,0,0,D,,,,2.1,3.3,
 Ireland,Premier Division,2026,07/08/2026,20:00,Shamrock Rovers,Dundalk,3,2,H,,,,1.91,3.7,4.2,1.86,3.45,3.63,2,3.65,4.2,1.9,3.5,3.6
 Ireland,Premier Division,2026,09/08/2026,15:00,Waterford,Bohemians,3,1,H,,,,3.45,3.65,2.05,3.26,3.46,1.96,3.65,3.8,2.12,3.4,3.5,1.95
 Ireland,Premier Division,2026,09/08/2026,17:00,Shelbourne,St. Patricks,1,2,A,,,,3.5,3.4,2.1,3.27,3.25,2.03,3.65,3.55,2.2,3.25,3.25,2.1
+Ireland,Premier Division,2026,21/08/2026,19:45,Bohemians,Derry City,5,3,H,,,,1.8,3.65,4.45,1.76,3.53,4.01,1.86,3.9,4.7,1.75,3.5,3.9
+Ireland,Premier Division,2026,21/08/2026,19:45,Drogheda,St. Patricks,0,2,A,,,,5,3.7,1.69,4.82,3.57,1.63,5.6,3.8,1.76,5,3.6,1.62
+Ireland,Premier Division,2026,21/08/2026,19:45,Dundalk,Galway,1,2,A,,,,1.9,3.75,3.6,1.85,3.58,3.53,2,3.8,4,1.85,3.5,3.6
+Ireland,Premier Division,2026,21/08/2026,20:00,Sligo Rovers,Waterford,0,0,D,,,,3,3.5,2.25,2.89,3.43,2.16,3.25,3.7,2.3,3,3.3,2.15
+Ireland,Premier Division,2026,28/08/2026,19:45,Bohemians,Sligo Rovers,3,0,H,,,,1.25,6.25,12,1.23,5.58,9.85,1.27,6.6,14,1.22,5.75,9.5
+Ireland,Premier Division,2026,28/08/2026,19:45,Galway,Shelbourne,1,1,D,,,,2.64,3.4,2.63,2.52,3.27,2.52,2.78,3.5,2.7,2.4,3.3,2.6
+Ireland,Premier Division,2026,28/08/2026,19:45,St. Patricks,Waterford,0,2,A,,,,1.37,5.25,7.5,1.34,4.81,6.99,1.4,5.6,8.6,1.33,4.5,7
+Ireland,Premier Division,2026,28/08/2026,20:00,Drogheda,Dundalk,2,3,A,,,,2.94,3.35,2.45,2.79,3.2,2.33,3,3.5,2.54,2.8,3.1,2.38
+Ireland,Premier Division,2026,30/08/2026,16:00,Derry City,Shamrock Rovers,3,3,D,,,,2.75,3.3,2.55,2.67,3.17,2.45,2.84,3.35,2.72,2.63,3.1,2.55
+Ireland,Premier Division,2026,04/09/2026,20:00,Shamrock Rovers,Shelbourne,0,0,D,,,,1.62,3.8,5.25,1.59,3.72,5.03,1.67,4.1,5.9,1.57,3.75,5
+Ireland,Premier Division,2026,11/09/2026,19:45,Drogheda,Sligo Rovers,2,0,H,,,,1.86,3.6,4.2,1.81,3.36,3.98,1.9,3.7,4.7,1.75,3.5,4
+Ireland,Premier Division,2026,11/09/2026,19:45,Galway,Bohemians,2,3,A,,,,4.2,4,1.8,4.05,3.73,1.71,4.5,4.1,1.8,4.1,3.75,1.7
+Ireland,Premier Division,2026,11/09/2026,19:45,Shelbourne,Derry City,0,1,A,,,,2.32,3.4,3,2.24,3.26,2.89,2.38,3.5,3.2,2.25,3.3,3
+Ireland,Premier Division,2026,11/09/2026,19:45,Waterford,Dundalk,1,1,D,,,,2.2,3.75,3,2.11,3.57,2.87,2.28,3.9,3.2,2.1,3.5,2.9
+Ireland,Premier Division,2026,11/09/2026,20:00,St. Patricks,Shamrock Rovers,2,0,H,,,,2.37,3.3,3.05,2.3,3.1,2.9,2.5,3.3,3.2,2.35,3.2,2.88
+Ireland,Premier Division,2026,14/09/2026,19:45,Dundalk,St. Patricks,0,4,A,,,,3.6,3.8,1.91,3.45,3.65,1.85,3.85,4.1,1.98,3.4,3.75,1.85
+Ireland,Premier Division,2026,14/09/2026,19:45,Shelbourne,Drogheda,1,2,A,,,,1.84,3.65,4.4,1.77,3.48,4.06,1.85,3.75,4.9,1.8,3.5,4.1
+Ireland,Premier Division,2026,14/09/2026,19:45,Sligo Rovers,Galway,1,3,A,,,,3.6,3.65,1.94,3.45,3.54,1.88,4,3.75,2.02,3.5,3.6,1.85
+Ireland,Premier Division,2026,14/09/2026,19:45,Waterford,Derry City,2,2,D,,,,2.6,3.65,2.48,2.51,3.46,2.41,2.76,3.7,2.68,2.5,3.6,2.45
+Ireland,Premier Division,2026,18/09/2026,19:45,Derry City,Galway,1,0,H,,,,1.56,4.2,5.5,1.52,3.98,5.1,1.62,4.5,6,1.53,3.9,5.5
+Ireland,Premier Division,2026,18/09/2026,19:45,Dundalk,Shelbourne,2,3,A,,,,2.62,3.55,2.5,2.5,3.4,2.45,2.74,3.65,2.7,2.55,3.5,2.45
+Ireland,Premier Division,2026,18/09/2026,20:00,Bohemians,Drogheda,2,1,H,,,,1.38,5,9,1.33,4.69,7.36,1.39,5.4,9.2,1.36,4.5,7.5
+Ireland,Premier Division,2026,18/09/2026,20:00,Shamrock Rovers,Waterford,3,2,H,,,,1.5,4.5,5.9,1.48,4.23,5.46,1.54,4.9,6.4,1.5,4.1,5.5
+Ireland,Premier Division,2026,19/09/2026,19:45,Sligo Rovers,St. Patricks,0,1,A,,,,9.3,5.25,1.33,8.17,4.84,1.29,10.5,5.9,1.34,9,4.5,1.3
