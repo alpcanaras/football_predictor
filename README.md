@@ -115,6 +115,32 @@ probabilities are optimistic rather than you being unlucky. As measured on
 claimed 48.8% and realised 46.7% (95% CI ±2.2), draws 25.8% predicted against
 26.5% actual.
 
+## Can this beat the bookmaker? (settled)
+
+No, and [`scripts/exp_market_feature.py`](scripts/exp_market_feature.py)
+records why, so the question does not get re-litigated. On 2,607 matches
+out-of-sample from 2026-06-01, with both variants trained under the same
+cutoff:
+
+| model | log-loss |
+|---|---|
+| features only | 1.0264 |
+| features + market as a feature | 1.0083 |
+| **market features only** | **1.0080** |
+| raw de-vigged book | **1.0074** |
+| blend(features, book), best weight | 1.0074 (w_model = 0.00) |
+
+Feeding the odds in as a *feature* — rather than log-pooling afterwards —
+closes nearly the whole gap, but only by teaching the model to copy the
+market. Tellingly, "market only" is as good as "features + market": the 45
+handcrafted features add **nothing** once the odds are present. Nothing beats
+the raw book, and the difference is not significant (t = -0.56).
+
+So the ceiling is not a modelling failure — the features are redundant with
+the market. The model earns its keep exactly where there are **no** odds
+(1.0264 alone, far better than a coin) and in Toto, where the opponent is the
+crowd.
+
 ## Health check
 
 ```bash

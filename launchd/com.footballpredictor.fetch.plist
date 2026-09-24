@@ -5,13 +5,11 @@
     <key>Label</key>
     <string>com.footballpredictor.fetch</string>
 
-    <!-- Run scripts/fetch_latest.py via the project's venv python. -->
+    <!-- Fetch + rebuild + verify. See launchd/daily.sh. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/alpcanaras/football_predictor/venv/bin/python</string>
-        <string>/Users/alpcanaras/football_predictor/scripts/fetch_latest.py</string>
-        <string>--apply</string>
-        <string>--refresh-processed</string>
+        <string>/bin/bash</string>
+        <string>/Users/alpcanaras/football_predictor/launchd/daily.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
