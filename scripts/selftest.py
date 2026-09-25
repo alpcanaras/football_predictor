@@ -55,22 +55,32 @@ def record(status: str, name: str, detail: str = '') -> None:
 
 # ---------------------------------------------------------------- 1. integrity
 def check_league_files() -> None:
+    """Every CSV in every league folder must really be that league.
+
+    Checks all files, not just the fetcher's target: rich leagues are now
+    stored one file per season, so a single target covers a fraction of the
+    data and a mis-served file in any other season would go unnoticed.
+    """
     from scripts import fetch_latest
     bad, checked = [], 0
-    for lg, src in config.FETCH_SOURCES.items():
-        path = os.path.join(config.DATA_DIR, lg, src['target'])
-        if not os.path.isfile(path):
+    for lg in config.FETCH_SOURCES:
+        folder = os.path.join(config.DATA_DIR, lg)
+        if not os.path.isdir(folder):
             continue
-        checked += 1
-        with open(path, 'rb') as f:
-            err = fetch_latest._validate_payload(f.read(), lg)
-        if err:
-            bad.append(f"{lg}:{src['target']} {err}")
+        for name in sorted(os.listdir(folder)):
+            if not name.lower().endswith('.csv'):
+                continue
+            checked += 1
+            with open(os.path.join(folder, name), 'rb') as f:
+                err = fetch_latest._validate_payload(f.read(), lg)
+            if err:
+                bad.append(f'{lg}/{name} {err}')
     if bad:
-        record(FAIL, 'league files hold the right league', '; '.join(bad))
+        record(FAIL, 'league files hold the right league',
+               '; '.join(bad[:4]) + (f' (+{len(bad)-4})' if len(bad) > 4 else ''))
     else:
         record(PASS, 'league files hold the right league',
-               f'{checked} fetch targets verified')
+               f'{checked} files verified')
 
 
 def check_processed_leagues() -> pd.DataFrame:

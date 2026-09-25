@@ -14,7 +14,8 @@ probabilities and good coverage allocation, not beating the market. Run
 ## Layout
 
 ```
-data/<league>/*.csv           Raw CSVs per league (one file per season + cumulative "new" files)
+data/<league>/*.csv           Rich: <DIV>_<season>.csv (D1_2526.csv). Sparse: <CODE>.csv (SWE.csv)
+data/_retired/                Superseded duplicates, kept for reversibility
 data/_incoming/<date>/        Staging area for scripts/fetch_latest.py
 full_processed_data.csv       Features-engineered matches (regenerated from data/)
 models/tier1/                 Production models: model_<market>_<league>[_lgbm].joblib
@@ -140,6 +141,31 @@ So the ceiling is not a modelling failure — the features are redundant with
 the market. The model earns its keep exactly where there are **no** odds
 (1.0264 alone, far better than a coin) and in Toto, where the opponent is the
 crowd.
+
+## Data file naming
+
+One convention, and `scripts/tidy_data.py` enforces it:
+
+```
+rich leagues    data/german/D1_2526.csv      <DIV>_<season>.csv
+sparse leagues  data/swedish/SWE.csv         <CODE>.csv  (one cumulative file)
+```
+
+Files used to arrive by three routes — hand-named seasons (`d20-21.csv`),
+browser duplicate downloads (`G1 (2).csv`, `E2-7.csv`) and the fetcher — so the
+same season sat on disk two or three times. The loader de-duplicates, so it
+cost correctness nothing, but it hid which seasons you actually had.
+
+```bash
+python scripts/tidy_data.py           # dry run
+python scripts/tidy_data.py --apply
+python scripts/tidy_data.py --undo
+```
+
+A file is only retired after proving **every match in it already exists in a
+canonical file**, and it is moved to `data/_retired/`, never deleted. The
+cleanup retired 98 duplicates and renamed 7, and the rebuilt dataset was
+byte-identical in size: 99,814 matches before and after.
 
 ## Health check
 
