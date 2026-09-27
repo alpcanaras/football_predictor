@@ -80,7 +80,9 @@ def load(fetch_if_missing: bool = True) -> pd.DataFrame:
         frames.append(df)
 
     if os.path.exists(extra_path):
-        df = pd.read_csv(extra_path, encoding='utf-8-sig', on_bad_lines='skip')
+        # The provider serves this .csv as either comma- or tab-separated.
+        df = pd.read_csv(extra_path, sep=None, engine='python',
+                         encoding='utf-8-sig', on_bad_lines='skip')
         df['league'] = df['Country'].map(COUNTRY_TO_LEAGUE)
         df = data_loader.normalize_columns(df)
         frames.append(df)
