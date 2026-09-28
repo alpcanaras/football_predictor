@@ -74,3 +74,31 @@ calendar leagues and July boundaries otherwise. Split competitions such as
 Mexico need a richer stage model before treating standings as stage-specific.
 No lineup, transfer, player-availability or shot-quality xG data is included.
 Probability benchmarking is exploratory; prospective results are required.
+
+Archive prospective forecasts from a trained bundle:
+
+```bash
+./venv/bin/python -m scripts.research_record record \
+  --bundle reports/research/RUN/bundle.joblib --refresh
+./venv/bin/python -m scripts.research_record grade \
+  --record reports/research_records/RECORD
+```
+
+Each recording gets a unique directory containing the original fixture feeds,
+their hashes and download timestamps, model hash, raw-result hashes and the
+forecast probabilities. Only fixtures strictly after the current UTC date are
+included, because the feed's kickoff timezone is not established. All state
+updates precede that date. Grading matches the exact league/date/home/away
+identity and writes a new grading file, preserving the original forecast.
+Download time is explicitly distinct from the unknown source quote time. These
+archives are local and are not scheduled automatically.
+
+`scripts/toto_settlement.py` provides the new settlement foundation without
+changing the existing application. `tier_counts` counts every purchased column
+in every exact prize tier. `settle` uses published payouts per winning column
+and deducts costs/fees. `scenarios` models independent public columns using
+supplied crowd percentages and field size; `evaluate` estimates net money
+using explicit tier pots, counting own winning columns in each pot's denominator.
+It supports comparing candidate systems on common simulations, but is not yet
+wired into the app's optimizer. Public-ticket independence is an assumption,
+and jurisdiction-specific rollover rules must be supplied through the pots.
