@@ -1,8 +1,10 @@
 {
   "with_odds": {
     "model": 0.0,
-    "book": 1.1118752590175014,
-    "dc": 0.0
+    "book": 1.0,
+    "dc": 0.0,
+    "devig": "shin",
+    "note": "Shin de-vig replaces proportional + a 1.11 temperature. OOS 2025/26+ (8,920 matches): prop 1.00419, prop^1.11 1.00349, shin 1.00337; the temperature Shin itself would want is ~1.03, so it is left at 1. Model weight re-confirmed 0 on 2,607 OOS matches (scripts/exp_market_feature.py)."
   },
   "no_odds": {
     "model": 0.8624259517028011,
