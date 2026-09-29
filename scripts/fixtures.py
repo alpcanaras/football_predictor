@@ -75,7 +75,10 @@ def load(fetch_if_missing: bool = True) -> pd.DataFrame:
         fetch()
 
     if os.path.exists(rich_path):
-        df = pd.read_csv(rich_path, encoding='utf-8-sig', on_bad_lines='skip')
+        # Same delimiter guard as the extra feed: the provider has switched
+        # one file to tabs without notice, so do not assume the other won't.
+        df = pd.read_csv(rich_path, sep=None, engine='python',
+                         encoding='utf-8-sig', on_bad_lines='skip')
         df['league'] = df['Div'].map(DIV_TO_LEAGUE)
         frames.append(df)
 
