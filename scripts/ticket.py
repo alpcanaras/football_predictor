@@ -9,12 +9,18 @@ Two objectives:
 
   * hit    - maximise P(>= threshold correct). What you want if you only care
              about winning *something*.
-  * payout - maximise expected return, which is NOT the same thing. Everyone
-             with 12+ shares the pot, so the prize depends on how many others
-             also got there. Back the field's favourites and you win in the
-             weeks thousands of others win too. The weeks worth winning are
-             the ones the crowd loses, so given crowd percentages this leans
-             toward outcomes you rate higher than the field does.
+  * payout - lean toward outcomes you rate above the crowd, because everyone
+             clearing the threshold shares the pot and the weeks worth winning
+             are the ones the field loses.
+
+             This is a PREFERENCE SCORE, not money. It counts one win per
+             ticket, while a system ticket can hold several winning columns;
+             it treats all prize tiers (12/13/14/15, or 10-13) as one pot; it
+             ignores ticket cost, rollovers and the real tier payouts; and
+             `tilt` bends it further toward hit rate. Use it to rank tickets
+             against each other, never to read off expected profit. The exact
+             per-tier, per-winning-column settlement in money lives on the
+             research/season-aware-evaluation branch (toto_settlement.py).
 
 Crowd percentages are the share of players on each outcome (the "oynanma
 yuzdesi"). Hand-enter them as three numbers per match; without them the
@@ -322,8 +328,8 @@ def render(rows, result, threshold, budget, probs, crowd=None) -> str:
     out.append('')
     out.append(f"  P(>= {threshold} correct) = {result['p_hit']:.2%}")
     if obj == 'payout':
-        out.append(f"  Expected share of the prize tier = {result['ev']:.2e} "
-                   "of the pot per week (compare between tickets)")
+        out.append(f"  Crowd-weighted preference score = {result['ev']:.2e} "
+                   "(ranks tickets against each other; NOT expected money)")
     singles = sum(1 for m in result['masks'] if popcount(m) == 1)
     doubles = sum(1 for m in result['masks'] if popcount(m) == 2)
     triples = sum(1 for m in result['masks'] if popcount(m) == 3)

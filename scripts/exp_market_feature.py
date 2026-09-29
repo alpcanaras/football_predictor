@@ -11,29 +11,27 @@ on, it can learn residual corrections.
 Both variants are trained here with the same cutoff so the comparison is
 clean (the shipped models saw this window, so they cannot be used).
 
-RESULT (2,607 out-of-sample matches from 2026-06-01, run 2026-09-24):
+RESULTS (2,607 matches from 2026-06-01):
 
-    A: features only         1.0264
-    B: features + market     1.0083
-    C: market only           1.0080
-    book (de-vigged)         1.0074
-    blend A + book           1.0074   (fitted w_model = 0.00)
+                             run 1     rerun
+    A: features only         1.0264    1.0266
+    B: features + market     1.0083    1.0076
+    C: market only           1.0080    1.0085
+    book (de-vigged)         1.0074    1.0074
 
-Three things follow, and they settle the question:
+What holds across both runs: the team model alone is clearly worse than the
+market, and nothing beats the raw book by more than its uncertainty (the
+retrospective blend again gives the model zero weight).
 
-  * Market features close almost the whole gap (1.0264 -> 1.0083), but only
-    by teaching the model to copy the market.
-  * B is no better than C. The 45 handcrafted features add NOTHING once the
-    market is available — the tree simply reads the odds.
-  * Neither beats the raw book, and the difference is not significant
-    (t = -0.56). A tree approximating a number you already have exactly is,
-    at best, that number.
+What does NOT hold: an earlier reading of run 1 that B == C, i.e. that the
+handcrafted features add nothing once odds are present. The rerun swaps B and
+C — the gap between them is noise. The confidence line below also treats
+matches as independent; same-weekend matches are correlated, so a weekly
+block bootstrap is the right interval (see the research branch).
 
-So the ceiling is not a modelling failure; the features are redundant with
-the market. The model earns its keep exactly where there are no odds —
-alone it scores 1.0264, far better than a coin — and in Toto, where the
-opponent is the crowd. Re-run this before anyone proposes beating the book
-again.
+This is one recipe on one window, and the blend weight is chosen on the test
+outcomes. It is evidence against an edge from this approach, not proof that
+no feature or price can ever beat the market.
 """
 import sys, numpy as np, pandas as pd
 sys.path.insert(0, '/Users/alpcanaras/football_predictor')

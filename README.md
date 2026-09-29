@@ -116,31 +116,37 @@ probabilities are optimistic rather than you being unlucky. As measured on
 claimed 48.8% and realised 46.7% (95% CI ±2.2), draws 25.8% predicted against
 26.5% actual.
 
-## Can this beat the bookmaker? (settled)
+## Can this beat the bookmaker?
 
-No, and [`scripts/exp_market_feature.py`](scripts/exp_market_feature.py)
-records why, so the question does not get re-litigated. On 2,607 matches
-out-of-sample from 2026-06-01, with both variants trained under the same
-cutoff:
+**Not on the evidence so far** — which is a narrower claim than "never".
 
-| model | log-loss |
-|---|---|
-| features only | 1.0264 |
-| features + market as a feature | 1.0083 |
-| **market features only** | **1.0080** |
-| raw de-vigged book | **1.0074** |
-| blend(features, book), best weight | 1.0074 (w_model = 0.00) |
+[`scripts/exp_market_feature.py`](scripts/exp_market_feature.py) trains three
+variants under one cutoff and scores 2,607 matches from 2026-06-01:
 
-Feeding the odds in as a *feature* — rather than log-pooling afterwards —
-closes nearly the whole gap, but only by teaching the model to copy the
-market. Tellingly, "market only" is as good as "features + market": the 45
-handcrafted features add **nothing** once the odds are present. Nothing beats
-the raw book, and the difference is not significant (t = -0.56).
+| model | log-loss (run 1) | log-loss (rerun) |
+|---|---|---|
+| features only | 1.0264 | 1.0266 |
+| features + market as a feature | 1.0083 | 1.0076 |
+| market features only | 1.0080 | 1.0085 |
+| raw de-vigged book | 1.0074 | 1.0074 |
 
-So the ceiling is not a modelling failure — the features are redundant with
-the market. The model earns its keep exactly where there are **no** odds
-(1.0264 alone, far better than a coin) and in Toto, where the opponent is the
-crowd.
+Two runs of the same experiment swap the order of "features + market" and
+"market only", so the earlier reading — that the 45 features add *nothing* once
+odds are present — was noise dressed up as a finding. What does hold in both:
+the team model alone is clearly worse than the market, and nothing here beats
+the raw book by more than its uncertainty.
+
+A more careful study on the `research/season-aware-evaluation` branch reaches
+the same place with stronger method: six non-overlapping 180-day windows,
+20,347 matches, weekly block-bootstrap intervals, a market-residual model
+(`softmax(log q_market + delta(features))`) and a calibrated market. Neither
+beats the market reliably; the football-only model is worse by about 0.017.
+
+What this does **not** show: that every feature set, subgroup or league lacks
+signal, or that no obtainable price anywhere is beatable. It shows that this
+recipe, on these windows, gives no reason to expect an edge — and that the
+model earns its keep where there are **no** odds, and in Toto, where the
+opponent is the crowd.
 
 ## Data file naming
 
@@ -514,5 +520,11 @@ Below the cliff you buy ~20–30% more expected payout for a few points of hit
 rate. Above it you are buying a lottery ticket. `--sweep` prints this table for
 your own coupon, since the cliff moves with the matches and the crowd.
 
-This raises expected payout, not hit rate, and it does not beat the rake — a
-pool keeping 40–55% is a bigger opponent than the crowd ever is.
+**Read "payout" as a preference score, not money.** It counts one win per
+ticket although a system ticket can hold several winning columns, treats every
+prize tier as one pot, and ignores ticket cost and rollovers; `tilt` then bends
+it further toward hit rate. It is good for ranking tickets against each other
+and for seeing the hit-rate trade-off, nothing more. Exact per-tier settlement
+in money — counting every winning column — is on the
+`research/season-aware-evaluation` branch (`toto_settlement.py`). None of this
+beats the rake: a pool keeping 40–55% is a bigger opponent than the crowd.
