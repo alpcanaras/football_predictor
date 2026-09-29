@@ -90,6 +90,17 @@ def _teacher_probs(df: pd.DataFrame) -> dict[str, np.ndarray]:
     return out
 
 
+def make_frame(raw: pd.DataFrame, state: rf.FeatureState) -> pd.DataFrame:
+    """Replay raw matches through a state; stable order + teacher columns."""
+    feats, _ = rf.replay(raw, state)
+    feats = feats.sort_values(['Date'] + rf.KEY[:1] + rf.KEY[2:],
+                              kind='stable').reset_index(drop=True)
+    for name, p in _teacher_probs(feats).items():
+        for k, c in enumerate('ADH'):
+            feats[f't_{name}_{c}'] = p[:, k]
+    return feats
+
+
 def build_cache(verbose=True, features: str = 'v1') -> pd.DataFrame:
     path = cache_path(features)
     t0 = time.time()
@@ -97,14 +108,9 @@ def build_cache(verbose=True, features: str = 'v1') -> pd.DataFrame:
     if verbose:
         print(f"  loaded {len(raw):,} matches in {time.time()-t0:.0f}s; replaying…")
     t1 = time.time()
-    feats, _ = rf.replay(raw, rf.FeatureState(market=features == 'mkt'))
+    feats = make_frame(raw, rf.FeatureState(market=features == 'mkt'))
     if verbose:
         print(f"  replayed in {time.time()-t1:.0f}s")
-    feats = feats.sort_values(['Date'] + rf.KEY[:1] + rf.KEY[2:],
-                              kind='stable').reset_index(drop=True)
-    for name, p in _teacher_probs(feats).items():
-        for k, c in enumerate('ADH'):
-            feats[f't_{name}_{c}'] = p[:, k]
     os.makedirs(REPORT_DIR, exist_ok=True)
     feats.to_pickle(path)
     meta = {
@@ -450,10 +456,43 @@ def run_experiment(name: str):
     return out
 
 
+def market_grid(cells=None, out_name='market_grid.csv'):
+    """Market-rating settings (update rule, speed, season carry-over), chosen
+    on the tuning windows only with the distilled recipe. Each cell is a full
+    replay of the pre-2024 matches."""
+    if cells is None:
+        cells = [dict(mkt_k=k, mkt_retention=r)
+                 for k in (20.0, 40.0, 80.0) for r in (.8, .9, 1.0)]
+    raw, _ = rf.load_raw()
+    raw = raw[raw.Date < TUNE_END]                    # hard wall
+    recipe = variant(name='grid', features='mkt', **BEST_DISTILL)
+    out = []
+    for cell in cells:
+        t0 = time.time()
+        frame = make_frame(raw, rf.FeatureState(market=True, **cell))
+        res = run(recipe, frame, TUNE_STARTS, save=False, verbose=False)
+        sm = summary(res)
+        out.append({**cell, **sm})
+        print(f"  {cell}  ll_all={sm['ll_all']:.5f} top2={sm['top2']:.4f} "
+              f"({time.time()-t0:.0f}s)", flush=True)
+    df = pd.DataFrame(out).sort_values('ll_all')
+    df.to_csv(os.path.join(REPORT_DIR, out_name), index=False)
+    return df
+
+
 # =============================================================================
 # HYPERPARAMETER SEARCH  (tuning windows only — never the test windows)
 # =============================================================================
 OPTUNA_DB = 'sqlite:///' + os.path.join(REPORT_DIR, 'optuna.db')
+
+
+def study_name(engine: str, features: str) -> str:
+    """One Optuna study per engine and exact feature version, so a search
+    never mixes trials scored on different features."""
+    base = f'v2_{engine}_distill'
+    if features == 'v1':
+        return base
+    return f"{base}_{features}_{rf.MARKET_VERSION.split('+')[-1]}"
 
 
 def _trial_recipe(trial, engine: str, features: str = 'v1') -> dict:
@@ -509,8 +548,7 @@ def tune(engine='xgb', n_trials=100, features='v1'):
         return float(np.mean(losses))
 
     study = optuna.create_study(
-        study_name=f'v2_{engine}_distill' + ('' if features == 'v1' else f'_{features}'),
-        storage=OPTUNA_DB,
+        study_name=study_name(engine, features), storage=OPTUNA_DB,
         load_if_exists=True, direction='minimize',
         sampler=optuna.samplers.TPESampler(seed=42, multivariate=True),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=1))
@@ -521,12 +559,13 @@ def tune(engine='xgb', n_trials=100, features='v1'):
         study.enqueue_trial({**b, 'gamma': 0.0, 'alpha': .5,
                              'half_life': 500.0, 'lookback_days': 1460})
         if features != 'v1':
-            try:
-                prior = optuna.load_study(study_name='v2_xgb_distill',
-                                          storage=OPTUNA_DB)
-                study.enqueue_trial(prior.best_params)
-            except Exception:
-                pass
+            # best settings of earlier searches on neighbouring feature sets
+            for prior_name in ('v2_xgb_distill_mkt', 'v2_xgb_distill'):
+                try:
+                    prior = optuna.load_study(study_name=prior_name, storage=OPTUNA_DB)
+                    study.enqueue_trial(prior.best_params)
+                except Exception:
+                    pass
     study.optimize(objective, n_trials=n_trials, gc_after_trial=True,
                    show_progress_bar=False)
     best = study.best_trial
@@ -535,9 +574,96 @@ def tune(engine='xgb', n_trials=100, features='v1'):
     return study
 
 
+# =============================================================================
+# SELECTION  (choose on the tuning windows, then score the test windows once)
+# =============================================================================
+def recipe_from_params(engine: str, params: dict, name: str,
+                       features: str = 'mkt') -> dict:
+    """Turn an Optuna trial's params back into a recipe (params replaced,
+    not merged, so no XGB-only setting leaks into a LightGBM recipe)."""
+    p = dict(params)
+    r = variant(name=name, engine=engine, features=features, **BEST_DISTILL)
+    r['alpha'] = p.pop('alpha')
+    r['half_life'] = p.pop('half_life')
+    r['lookback_days'] = p.pop('lookback_days')
+    if engine == 'lgbm':
+        p['subsample_freq'] = 1
+    r['params'] = p
+    return r
+
+
+def _best(engine, features):
+    import optuna
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    try:
+        st = optuna.load_study(study_name=study_name(engine, features), storage=OPTUNA_DB)
+        return st.best_trial
+    except Exception:
+        return None
+
+
+def select(features='mkt'):
+    frame = load_cache(features)
+    cands = []
+    bx, bl = _best('xgb', features), _best('lgbm', features)
+    if bx:
+        x = recipe_from_params('xgb', bx.params, f'sel_xgb_{features}', features)
+        cands += [x, {**x, 'name': x['name'] + '_refit', 'refit': True}]
+    if bl:
+        lg = recipe_from_params('lgbm', bl.params, f'sel_lgbm_{features}', features)
+        cands += [lg]
+    if bx and bl:
+        cands.append({'name': f'sel_ens_{features}', 'engine': 'ensemble',
+                      'members': [x, lg], 'cal_days': 90, 'calib': 'temperature'})
+    if not cands:
+        sys.exit('  no finished studies to select from')
+
+    def scored(r, tag, starts):
+        rr = {**r, 'name': f"{r['name']}__{tag}"}
+        path = os.path.join(RUN_DIR, rr['name'] + '.pkl')
+        return pd.read_pickle(path) if os.path.isfile(path) \
+            else run(rr, frame, starts, verbose=False)
+
+    refs = [BASELINE, variant(name='mkt_d_avgclose_a50', features='mkt', **BEST_DISTILL)]
+    report = {'features': features, 'tune': {}, 'test': {}}
+    # 1) choose on the tuning windows
+    base_t = scored(BASELINE, 'tune', TUNE_STARTS)
+    print(f"\n  [tune] choosing among {len(cands)} candidates (2022-23 windows)")
+    for r in refs[1:] + cands:
+        res = scored(r, 'tune', TUNE_STARTS)
+        sm, pr = summary(res), paired(base_t, res)
+        report['tune'][r['name']] = {**sm, 'gain_vs_research': pr}
+        print(f"  {r['name']:<28} ll_all={sm['ll_all']:.5f} top2={sm['top2']:.4f} "
+              f"gain {pr['diff']:+.5f} [{pr['lo']:+.5f}, {pr['hi']:+.5f}]")
+    chosen = min(cands, key=lambda r: report['tune'][r['name']]['ll_all'])
+    print(f"  -> chosen on tuning windows: {chosen['name']}")
+    report['chosen'] = chosen['name']
+    # 2) confirm on the test windows (chosen first; others for information)
+    base_s = scored(BASELINE, 'test', TEST_STARTS)
+    ref_s = scored(refs[1], 'test', TEST_STARTS)
+    print(f"\n  [test] 2024-26 windows (never seen by tuning or selection)")
+    for r in [chosen] + [c for c in cands if c is not chosen] + refs[1:]:
+        res = scored(r, 'test', TEST_STARTS)
+        sm = summary(res)
+        pr, pr2 = paired(base_s, res), paired(ref_s, res)
+        report['test'][r['name']] = {**sm, 'gain_vs_research': pr,
+                                     'gain_vs_untuned_mkt': pr2}
+        mark = '  <- chosen' if r is chosen else ''
+        print(f"  {r['name']:<28} ll_all={sm['ll_all']:.5f} top2={sm['top2']:.4f} "
+              f"vs research {pr['diff']:+.5f} [{pr['lo']:+.5f}, {pr['hi']:+.5f}] "
+              f"vs untuned {pr2['diff']:+.5f} [{pr2['lo']:+.5f}, {pr2['hi']:+.5f}]{mark}")
+    with open(os.path.join(REPORT_DIR, 'selection.json'), 'w') as f:
+        json.dump(report, f, indent=2, default=float)
+    with open(os.path.join(REPORT_DIR, 'selected_recipe.json'), 'w') as f:
+        json.dump(chosen, f, indent=2)
+    print(f"\n  wrote reports/v2/selection.json and selected_recipe.json")
+    return chosen, report
+
+
 def main():
     ap = argparse.ArgumentParser(description='V2 training pipeline')
-    ap.add_argument('command', choices=['cache', 'baseline', 'exp', 'tune'])
+    ap.add_argument('command', choices=['cache', 'baseline', 'exp', 'tune', 'mktgrid',
+                                        'select'])
     ap.add_argument('name', nargs='?')
     ap.add_argument('--engine', default='xgb', choices=['xgb', 'lgbm'])
     ap.add_argument('--trials', type=int, default=100)
@@ -549,6 +675,24 @@ def main():
         tune(a.engine, a.trials, a.features)
     elif a.command == 'exp':
         run_experiment(a.name)
+    elif a.command == 'select':
+        select(a.features)
+    elif a.command == 'mktgrid':
+        if a.name == 'invert':
+            # k=80 won the first grid at its edge: extend it, and try the
+            # price-inversion rule that adopts a new team's level at once
+            cells = ([dict(mkt_k=k, mkt_retention=.8) for k in (120.0, 180.0)]
+                     + [dict(mkt_mode='invert', mkt_lambda=lam, mkt_retention=r)
+                        for lam in (.1, .2, .35) for r in (.8, .9)])
+            print(market_grid(cells, 'market_grid_invert.csv').to_string(index=False))
+        elif a.name == 'fast':
+            # both rules still improved at the fastest setting tried: go further
+            cells = ([dict(mkt_k=k, mkt_retention=.9) for k in (260.0, 380.0)]
+                     + [dict(mkt_mode='invert', mkt_lambda=lam, mkt_retention=.9)
+                        for lam in (.5, .7, 1.0)])
+            print(market_grid(cells, 'market_grid_fast.csv').to_string(index=False))
+        else:
+            print(market_grid().to_string(index=False))
     elif a.command == 'baseline':
         res = run(BASELINE)
         print(json.dumps({k: (round(v, 5) if isinstance(v, float) else v)

@@ -19,14 +19,18 @@ import pandas as pd
 from scripts import config, data_loader
 
 VERSION = 'causal-day-state-v1'
-MARKET_VERSION = VERSION + '+mkt2'     # FeatureState(market=True)
+MARKET_VERSION = VERSION + '+mkt3'     # FeatureState(market=True)
 # Prices a finished match is rated from, best first. Closing prices are
 # allowed HERE because the update runs after the match is complete: they are
 # history by then, like the score. (99.9% of matches carry the average close;
 # pre-match prices exist for only the rich leagues.)
 RATING_ODDS = [('AvgCH', 'AvgCD', 'AvgCA'), ('PSCH', 'PSCD', 'PSCA'),
                ('B365CH', 'B365CD', 'B365CA')]
-MKT_K = 40.0              # prices are far less noisy than results: move faster
+# Chosen on the pre-2024 tuning windows only (reports/v2/market_grid*.csv):
+# faster kept helping up to k~260 (1.00707 at k=40 -> 1.00312), then turned.
+# The price-inversion rule tied (1.00320 at lambda .35), including on teams
+# with few priced games, so the simpler rule stays.
+MKT_K = 260.0             # prices are far less noisy than results: move fast
 MKT_RETENTION = 0.9
 MKT_HOME_ADV = 60.0
 CALENDAR_LEAGUES = {'argentina', 'BRAZIL', 'chn', 'fin', 'japan', 'norsk',
@@ -158,12 +162,16 @@ class FeatureState:
     Feature lookup is read-only, including season regression.
     """
     def __init__(self, k=20.0, season_retention=0.85, market=False,
-                 mkt_k=MKT_K, mkt_retention=MKT_RETENTION):
+                 mkt_k=MKT_K, mkt_retention=MKT_RETENTION,
+                 mkt_mode='elo', mkt_lambda=0.2):
         if not 0 <= season_retention <= 1 or k <= 0:
             raise ValueError('Invalid Elo settings')
         self.k, self.season_retention = float(k), float(season_retention)
         self.market = bool(market)
         self.mkt_k, self.mkt_retention = float(mkt_k), float(mkt_retention)
+        if mkt_mode not in ('elo', 'invert'):
+            raise ValueError('mkt_mode must be elo or invert')
+        self.mkt_mode, self.mkt_lambda = mkt_mode, float(mkt_lambda)
         self.teams = {}
         self.league_results = defaultdict(lambda: deque(maxlen=150))
         self.h2h = defaultdict(lambda: deque(maxlen=6))
@@ -249,13 +257,24 @@ class FeatureState:
             return
         qa, qd, qh = q
         hr, ar = self._mkt_rating(h, season), self._mkt_rating(a, season)
-        expected = 1 / (1 + 10 ** ((ar - hr - MKT_HOME_ADV) / 400))
-        delta = self.mkt_k * ((qh + .5 * qd) - expected)
+        if self.mkt_mode == 'elo':
+            expected = 1 / (1 + 10 ** ((ar - hr - MKT_HOME_ADV) / 400))
+            delta = self.mkt_k * ((qh + .5 * qd) - expected)
+            new_h, new_a = hr + delta, ar - delta
+        else:
+            # invert the price into the rating gap it implies, then move each
+            # side toward "opponent +/- gap"; a new team adopts it outright
+            share = min(max(qh + .5 * qd, .02), .98)
+            gap = 400 * np.log10(share / (1 - share)) - MKT_HOME_ADV
+            lh = max(self.mkt_lambda, 1 / (h.mkt_n + 1))
+            la = max(self.mkt_lambda, 1 / (a.mkt_n + 1))
+            new_h = hr + lh * ((ar + gap) - hr)
+            new_a = ar + la * ((hr - gap) - ar)
         h_pts = 3 if hg > ag else int(hg == ag)
         a_pts = 3 if ag > hg else int(hg == ag)
         for team, rating, pts, exp_pts in (
-                (h, hr + delta, h_pts, 3 * qh + qd),
-                (a, ar - delta, a_pts, 3 * qa + qd)):
+                (h, new_h, h_pts, 3 * qh + qd),
+                (a, new_a, a_pts, 3 * qa + qd)):
             team.mkt_rating, team.mkt_season = rating, season
             team.mkt_n += 1
             team.mkt_hist.append((qd, pts - exp_pts))
