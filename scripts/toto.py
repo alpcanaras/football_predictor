@@ -62,8 +62,9 @@ def _fold(s):
 # PROBABILITIES PER MATCH
 # =============================================================================
 def _devig(o1, ox, o2):
-    inv = np.array([1.0 / o1, 1.0 / ox, 1.0 / o2])
-    return inv / inv.sum()
+    """Margin-free [1, X, 2] via Shin's method (see scripts/market.py)."""
+    from scripts import market
+    return market.shin([o1, ox, o2])
 
 
 def _load_blend_weights():

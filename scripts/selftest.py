@@ -186,6 +186,36 @@ def check_name_resolution() -> None:
                f'{len(cases)} club + 4 national shorthands')
 
 
+def check_ticket_grading() -> None:
+    """A double must count as covered when either of its outcomes lands.
+
+    History once compared picks by exact string, so a '1X' double with a draw
+    was graded wrong and its expected success taken as the single top outcome.
+    """
+    from scripts import track
+    club = pd.DataFrame({'Date': [pd.Timestamp.today().normalize()],
+                         'HomeTeam': ['A'], 'AwayTeam': ['B'], 'FTR': ['D']})
+    empty_intl = pd.DataFrame(columns=['home_team', 'away_team', 'home_score',
+                                       'away_score', 'date'])
+    lk = track.ResultLookup(club=club, intl=empty_intl)
+    base = {'home': 'A', 'away': 'B', 'p1': 0.5, 'px': 0.3, 'p2': 0.2,
+            'saved_at': None}
+    want = {'1': (False, 0.5), 'X': (True, 0.3), '1X': (True, 0.8),
+            '12': (False, 0.7), '1X2': (True, 1.0)}
+    bad = []
+    for pick, (cov, exp) in want.items():
+        entry = {'saved_at': pd.Timestamp.today().isoformat(),
+                 'matches': [{**base, 'pick': pick}], 'threshold': 1}
+        g = track.grade_coupon(entry, lk)
+        if g['rows'][0]['ok'] != cov or abs(g['expected'] - exp) > 1e-9:
+            bad.append(f"{pick}: got {g['rows'][0]['ok']}/{g['expected']:.2f}")
+    if bad:
+        record(FAIL, 'history grades the played ticket', '; '.join(bad))
+    else:
+        record(PASS, 'history grades the played ticket',
+               'doubles/triples count as covered')
+
+
 def check_tracker() -> None:
     """Save -> grade roundtrip against real recent results, in a temp dir."""
     import tempfile
@@ -496,6 +526,7 @@ def main() -> int:
     check_name_resolution()
     check_euro_clubs()
     check_ticket_engine()
+    check_ticket_grading()
     check_tracker()
     check_models(args.quick)
     check_international()

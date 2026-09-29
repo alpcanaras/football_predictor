@@ -863,11 +863,11 @@ with tab_toto:
                 tiers[k].metric(f"P(≥{t})", f"{d[t:].sum():.1%}")
 
         p_single = d[threshold:].sum()
-        p_played = p_single
+        sys_cov = None
         if budget > 1:
             cov, cols, p_thr = toto.optimize_system(
                 sorted_probs, threshold, int(budget))
-            p_played = p_thr
+            sys_cov = (cov, cols, p_thr)
             st.markdown(f"**Best system in {budget} columns** — uses "
                         f"{cols} columns; **P(≥{threshold}) = {p_thr:.1%}** "
                         f"(vs {p_single:.1%} single)")
@@ -933,19 +933,22 @@ with tab_toto:
                            f"{len(out)} matches. Ignoring the crowd numbers.")
                 crowd_arr = None
 
+            # Full-precision probabilities, not the table's rounded percents —
+            # rounding to whole numbers can change which ticket is optimal.
+            full_probs = [np.array([m['p1'], m['px'], m['p2']])
+                          for m in res.get('picks', [])] or \
+                [np.array([r['1'], r['X'], r['2']]) / 100.0 for r in out]
             bt1, bt2 = st.columns([1, 1])
             if bt1.button("🎫 Build ticket", key=f'mk_{game}'):
                 with st.spinner("Choosing symbols…"):
                     st.session_state[f'ticket_{game}'] = ticket_mod.build(
-                        [np.array([r['1'], r['X'], r['2']]) / 100.0
-                         for r in out],
+                        full_probs,
                         threshold, int(budget), crowd=crowd_arr, tilt=tilt)
             if crowd_arr is not None and bt2.button("⚖️ Show trade-off",
                                                     key=f'sw_{game}'):
                 with st.spinner("Comparing tilts…"):
                     st.session_state[f'sweep_{game}'] = ticket_mod.sweep(
-                        [np.array([r['1'], r['X'], r['2']]) / 100.0
-                         for r in out], threshold, int(budget), crowd_arr)
+                        full_probs, threshold, int(budget), crowd_arr)
 
             tk = st.session_state.get(f'ticket_{game}')
             if tk and len(tk['labels']) == len(out):
@@ -960,7 +963,8 @@ with tab_toto:
                 mk1.metric("Columns used", f"{tk['columns']} / {int(budget)}")
                 mk2.metric(f"P(≥{threshold})", f"{tk['p_hit']:.2%}")
                 mk3.metric("Optimised for",
-                           "payout" if tk['objective'] == 'payout' else "hit")
+                           "crowd-weighted" if tk['objective'] == 'payout'
+                           else "hit chance")
                 st.download_button(
                     "Download ticket", tdf.to_csv(index=False),
                     f"ticket_{game}.csv", key=f'dl_{game}')
@@ -976,18 +980,47 @@ with tab_toto:
                     'ticket': r['ticket'],
                 } for r in sw]), use_container_width=True, hide_index=True)
                 st.caption("Take the largest tilt whose hit rate you can live "
-                           "with. Past the cliff it is a lottery ticket.")
+                           "with. Past the cliff it is a lottery ticket. "
+                           "'payout' is a crowd-weighted preference score for "
+                           "comparing tickets — not expected money: it counts one "
+                           "win per ticket and ignores separate prize tiers, "
+                           "ticket cost and rollovers.")
 
         # --- record it, so "does this work?" becomes a number ----------------
         sv1, sv2 = st.columns([1, 3])
         note = sv2.text_input("Note (optional)", key=f'note_{game}',
                               placeholder="e.g. week 34, played 48 columns",
                               label_visibility='collapsed')
+        # What gets saved must be the ticket you actually play, graded against
+        # the probability of THAT ticket. Previously the singles were saved
+        # alongside the system's P(prize), so history compared two different
+        # tickets. Priority: a ticket from 🎫 Build my ticket, then the system
+        # recommended above, then the single column.
+        base = res.get('picks', [])
+        built = st.session_state.get(f'ticket_{game}')
+        if built and len(built.get('labels', [])) == len(base):
+            played = [{**m, 'pick': lbl} for m, lbl in zip(base, built['labels'])]
+            save_p, save_cols, save_kind = (built['p_hit'], built['columns'],
+                                            'ticket')
+        elif sys_cov is not None and len(sys_cov[0]) == len(base):
+            cov, cols, p_thr = sys_cov
+            played = []
+            for m, c in zip(base, cov):
+                pr = [m['p1'], m['px'], m['p2']]
+                top = sorted(range(3), key=lambda k: -pr[k])[:c]
+                played.append({**m, 'pick': ''.join('1X2'[k] for k in sorted(top))})
+            save_p, save_cols, save_kind = p_thr, cols, 'system'
+        else:
+            played, save_p, save_cols, save_kind = base, p_single, 1, 'single'
+        sv1.caption(f"Will save: **{save_kind}**, {save_cols} column(s), "
+                    f"P(≥{threshold}) {save_p:.1%}")
+
         if sv1.button("💾 Save to history", key=f'save_{game}'):
             from scripts import track
-            track.save_coupon(game, res.get('picks', []), budget=int(budget),
-                              threshold=threshold, p_threshold=float(p_played),
-                              note=note or '')
+            track.save_coupon(game, played, budget=int(budget),
+                              threshold=threshold, p_threshold=float(save_p),
+                              note=note or '', columns=int(save_cols),
+                              kind=save_kind)
             st.session_state.pop('graded', None)
             st.success("Saved. Once these matches are played, grade them in "
                        "**📈 History** below.")
@@ -1021,6 +1054,7 @@ with tab_toto:
                     rows.append({
                         'Saved': (g['saved_at'] or '')[:16].replace('T', ' '),
                         'Game': (g['game'] or '').capitalize(),
+                        'Cols': g.get('columns') or '—',
                         'Result': (f"{g['correct']}/{g['graded']}"
                                    + (f" (of {g['n']})" if pending else '')),
                         'Expected': round(g['expected'], 1),

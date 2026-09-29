@@ -44,7 +44,12 @@ def build_pool(since: str, use_odds: bool) -> pd.DataFrame:
     """Out-of-sample matches with a model probability and the actual result."""
     all_data = data_loader.load_processed_data()
     rows = []
+    # Leagues whose models were trained on every available match have no
+    # out-of-sample window: scoring them here would grade models on their own
+    # training data and flatter the calibration this script exists to check.
     for league in utils.get_available_leagues():
+        if league in blend_mod.IN_SAMPLE_LEAGUES:
+            continue
         feats = config.get_features_for_league(league)
         ldf = all_data[all_data['league'] == league]
         need = feats + ['result_label']

@@ -54,16 +54,27 @@ def history_file() -> str:
 # =============================================================================
 def save_coupon(game: str, matches: list[dict], budget: int = 1,
                 threshold: int | None = None, p_threshold: float | None = None,
-                note: str = '') -> dict:
+                note: str = '', columns: int | None = None,
+                kind: str = 'single') -> dict:
     """Append one analysed coupon to the history.
 
-    `matches` items need: home, away, p1, px, p2, pick (and optionally src).
+    `matches` items need: home, away, p1, px, p2, pick — where pick is what was
+    actually PLAYED on that match ('1', '1X', '12', '1X2', ...), not merely the
+    most likely outcome. `p_threshold` must describe that same ticket, and
+    `columns` how many columns it costs; `kind` records where the ticket came
+    from ('single', 'system' or 'ticket').
     """
+    if columns is None:
+        columns = 1
+        for m in matches:
+            columns *= max(1, len(played_symbols(m.get('pick'))))
     entry = {
         'id': dt.datetime.now().strftime('%Y%m%d-%H%M%S'),
         'saved_at': dt.datetime.now().isoformat(timespec='seconds'),
         'game': game,
         'budget': int(budget),
+        'columns': int(columns),
+        'kind': kind,
         'threshold': threshold,
         'p_threshold': p_threshold,
         'note': note,
@@ -139,7 +150,10 @@ class ResultLookup:
     # A coupon is normally saved shortly before kickoff, but may be saved just
     # after; either way we want *that* meeting, not last season's.
     BACK_DAYS = 7
-    FORWARD_DAYS = 90
+    # A coupon covers the coming week. A long forward window can match a later
+    # meeting of the same fixture — Scottish sides play each other up to four
+    # times a season, sometimes with the same side at home twice in weeks.
+    FORWARD_DAYS = 21
 
     def lookup(self, home: str, away: str, after=None):
         """The outcome of the meeting this coupon refers to ('H'/'D'/'A')."""
@@ -160,30 +174,58 @@ class ResultLookup:
         return max(hits, key=lambda t: pd.Timestamp(t[0]))[1]
 
 
+_SYMBOL_INDEX = {'1': 0, 'X': 1, '2': 2}
+
+
+def played_symbols(pick) -> set[str]:
+    """The outcomes a ticket actually covers for one match.
+
+    A saved pick is whatever was played: '1', 'X', '2', or a double/triple such
+    as '1X', '12', 'X2', '1X2'. Grading by exact string equality — the old
+    behaviour — marked a correct '1X' double wrong whenever the draw landed,
+    because 'X' != '1X'.
+    """
+    return {c for c in str(pick or '').upper() if c in _SYMBOL_INDEX}
+
+
+def covered_probability(m: dict, symbols: set[str]) -> float | None:
+    """P(the actual result is one of the played symbols)."""
+    probs = [m.get('p1'), m.get('px'), m.get('p2')]
+    if not symbols or any(p is None for p in probs):
+        return None
+    return float(sum(probs[_SYMBOL_INDEX[c]] for c in symbols))
+
+
 def grade_coupon(entry: dict, lookup: ResultLookup) -> dict:
-    """Compare a saved coupon with what actually happened."""
+    """Compare the ticket that was saved with what actually happened.
+
+    For a full-system ticket the best column gets a match right exactly when
+    the result is among the symbols played there, so 'correct' is the number of
+    covered matches and 'cleared' means the best column reached the threshold.
+    Counting every winning column per prize tier, in money, needs the exact
+    settlement engine; this answers "did the ticket reach a prize".
+    """
     saved = entry.get('saved_at')
     rows, correct, graded = [], 0, 0
     exp = 0.0
     for m in entry.get('matches', []):
-        probs = [m.get('p1'), m.get('px'), m.get('p2')]
-        pick = m.get('pick')
-        top = max(p for p in probs if p is not None) if any(
-            p is not None for p in probs) else None
+        symbols = played_symbols(m.get('pick'))
+        cov_p = covered_probability(m, symbols)
         actual_ftr = lookup.lookup(m['home'], m['away'], after=saved)
         actual = _FTR_TO_PICK.get(actual_ftr) if actual_ftr else None
         ok = None
         if actual is not None:
             graded += 1
-            ok = (actual == pick)
+            ok = actual in symbols
             correct += int(ok)
-        if top is not None:
-            exp += float(top)
-        rows.append({**m, 'actual': actual, 'ok': ok})
+        if cov_p is not None:
+            exp += cov_p
+        rows.append({**m, 'actual': actual, 'ok': ok, 'covered_p': cov_p})
     return {
         'id': entry.get('id'), 'game': entry.get('game'),
         'saved_at': saved, 'threshold': entry.get('threshold'),
         'p_threshold': entry.get('p_threshold'),
+        'columns': entry.get('columns') or entry.get('budget'),
         'n': len(entry.get('matches', [])), 'graded': graded,
         'correct': correct, 'expected': exp, 'rows': rows,
         'complete': graded == len(entry.get('matches', [])) and graded > 0,
@@ -261,9 +303,11 @@ def cmd_calibration(_args):
         print(f"  Only {len(rows)} graded picks so far — need a few more "
               "coupons before calibration means anything.")
         return
-    conf = np.array([max(r['p1'], r['px'], r['p2']) for r in rows])
+    rows = [r for r in rows if r.get('covered_p') is not None]
+    conf = np.array([r['covered_p'] for r in rows])
     hit = np.array([bool(r['ok']) for r in rows])
-    print(f"\n  Calibration over {len(rows)} graded picks\n")
+    print(f"\n  Calibration over {len(rows)} graded picks "
+          "(probability the played symbols covered the result)\n")
     print(f"  {'confidence':<16} {'n':>5} {'predicted':>10} {'actual':>8}")
     print('  ' + '-' * 44)
     for lo, hi in [(0, .4), (.4, .5), (.5, .6), (.6, .7), (.7, .8), (.8, 1.01)]:

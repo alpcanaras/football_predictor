@@ -46,3 +46,6 @@ reports/
 # IDE
 .idea/
 .vscode/
+
+# Local safety backups of production models (git tag prod-* is the durable copy)
+models/_backup/
