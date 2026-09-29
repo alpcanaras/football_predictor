@@ -241,24 +241,67 @@ def apply_temperature(p: np.ndarray, t: float) -> np.ndarray:
     return _softmax(np.log(np.clip(p, 1e-12, 1)) / t)
 
 
+class V2Model:
+    """What a recipe produces for one as-of date: one or more fitted members
+    averaged, then temperature-scaled. The backtest scores exactly this
+    object, and the bundle saves exactly this object, so what was measured
+    is what gets served."""
+
+    def __init__(self, models, temperature, columns, recipe, asof):
+        self.models, self.temperature = models, float(temperature)
+        self.columns, self.recipe, self.asof = list(columns), recipe, str(asof)
+
+    def raw_proba(self, df: pd.DataFrame) -> np.ndarray:
+        # reindex: a league registered after training gets all-zero one-hots
+        X = matrix(df).reindex(columns=self.columns, fill_value=0.0)
+        return np.mean([m.predict_proba(X) for m in self.models], axis=0)
+
+    def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
+        """Class order [A, D, H]."""
+        return apply_temperature(self.raw_proba(df), self.temperature)
+
+
+def fit_window(recipe: dict, frame: pd.DataFrame, asof) -> tuple[V2Model, dict]:
+    """Fit a recipe using only matches strictly before `asof`: each member on
+    its own lookback up to the calibration window, then one temperature on
+    the shared calibration window (the last cal_days before `asof`)."""
+    members = recipe.get('members') or [recipe]
+    cal_days = recipe.get('cal_days', 90)
+    models, pcs, info = [], [], {}
+    for r in members:
+        fit, cal, _ = split(frame, asof, test_days=1, cal_days=cal_days,
+                            lookback_days=r['lookback_days'])
+        m = fit_base(fit, r)
+        pcs.append(m.predict_proba(matrix(cal)))
+        if r.get('refit'):
+            # the calibration window only chose T; refit the trees on it too
+            # so the served model has seen the most recent days
+            m = fit_base(pd.concat([fit, cal]), r)
+        models.append(m)
+        info = {'n_fit': int(len(fit)), 'n_cal': int(len(cal))}
+    temp = 1.0
+    if recipe.get('calib', 'temperature') == 'temperature':
+        temp = fit_temperature(np.mean(pcs, axis=0), labels(cal))
+    return V2Model(models, temp, matrix(cal.head(1)).columns, recipe, asof), info
+
+
 def run(recipe: dict, frame: pd.DataFrame | None = None,
-        starts=TEST_STARTS, save=True, verbose=True) -> pd.DataFrame:
+        starts=TEST_STARTS, save=True, verbose=True,
+        test_days=TEST_DAYS) -> pd.DataFrame:
     """Score a recipe on every outer window; returns one row per test match."""
     frame = load_cache() if frame is None else frame
     rows = []
     t_all = time.time()
     for s in starts:
         t0 = time.time()
-        fit, cal, test = split(frame, s, cal_days=recipe['cal_days'],
-                               lookback_days=recipe['lookback_days'])
+        t_start = pd.Timestamp(s)
+        test = frame[(frame.Date >= t_start)
+                     & (frame.Date < t_start + pd.Timedelta(days=test_days))]
         if test.empty:
             continue
-        m = fit_base(fit, recipe)
-        pc = m.predict_proba(matrix(cal))
-        temp = 1.0
-        if recipe.get('calib') == 'temperature':
-            temp = fit_temperature(pc, labels(cal))
-        p = apply_temperature(m.predict_proba(matrix(test)), temp)
+        model, info = fit_window(recipe, frame, s)
+        p = model.predict_proba(test)
+        temp = model.temperature
         out = test[['match_id', 'Date', 'league', 'FTR', 'qA', 'qD', 'qH']].copy()
         out['fold'] = s
         out['y'] = labels(test)
@@ -267,7 +310,7 @@ def run(recipe: dict, frame: pd.DataFrame | None = None,
         rows.append(out)
         if verbose:
             ll = -np.log(np.clip(p[np.arange(len(test)), labels(test)], 1e-12, None)).mean()
-            print(f"    {s}  fit={len(fit):>6,} cal={len(cal):>5,} test={len(test):>5,}"
+            print(f"    {s}  fit={info['n_fit']:>6,} cal={info['n_cal']:>5,} test={len(test):>5,}"
                   f"  T={temp:.3f}  ll={ll:.4f}  ({time.time()-t0:.0f}s)")
     res = pd.concat(rows, ignore_index=True)
     if save:
