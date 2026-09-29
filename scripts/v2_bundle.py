@@ -283,10 +283,13 @@ def shadow(days: int = 7):
           .head(40).to_string(index=False))
 
 
-def grade():
+def grade(bundle: str | None = None):
     if not os.path.isfile(SHADOW_LOG):
         sys.exit("  no shadow log yet — run: python -m scripts.v2_bundle shadow")
     log = pd.read_csv(SHADOW_LOG, parse_dates=['Date'])
+    tag = bundle or open(LATEST).read().strip()
+    log = log[log.bundle == tag]
+    print(f"  bundle {tag}")
     raw, _ = rf.load_raw()
     res = raw[rf.KEY + ['FTR']]
     j = log.merge(res, on=rf.KEY, how='inner')
@@ -341,7 +344,8 @@ def main():
     b.add_argument('--tag')
     s = sub.add_parser('shadow')
     s.add_argument('--days', type=int, default=7)
-    sub.add_parser('grade')
+    g = sub.add_parser('grade')
+    g.add_argument('--bundle', help='default: the latest bundle')
     sub.add_parser('status')
     a = ap.parse_args()
     if a.cmd == 'build':
@@ -350,7 +354,7 @@ def main():
     elif a.cmd == 'shadow':
         shadow(a.days)
     elif a.cmd == 'grade':
-        grade()
+        grade(a.bundle)
     else:
         status()
 
