@@ -61,20 +61,26 @@ def raw_fingerprint() -> str:
     return hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
 
 
-def fresh_cache(verbose=True) -> pd.DataFrame:
+def feature_set(recipe: dict) -> str:
+    members = recipe.get('members') or [recipe]
+    return 'mkt' if any(m.get('features') == 'mkt' for m in members) else 'v1'
+
+
+def fresh_cache(features: str = 'v1', verbose=True) -> pd.DataFrame:
     """The feature cache, rebuilt if any raw league file changed since."""
-    meta_path = v2.CACHE + '.json'
+    path = v2.cache_path(features)
     fp = raw_fingerprint()
-    if os.path.isfile(v2.CACHE) and os.path.isfile(meta_path):
-        with open(meta_path) as f:
+    if os.path.isfile(path) and os.path.isfile(path + '.json'):
+        with open(path + '.json') as f:
             meta = json.load(f)
-        if meta.get('raw_files_sha256') == fp and meta.get('feature_version') == rf.VERSION:
+        if (meta.get('raw_files_sha256') == fp
+                and meta.get('feature_version') == rf.version(features == 'mkt')):
             if verbose:
                 print(f"  feature cache is current (data through {meta['date_max']})")
-            return v2.load_cache()
+            return v2.load_cache(features)
     if verbose:
-        print("  raw data changed since the feature cache was built — rebuilding")
-    return v2.build_cache(verbose=verbose)
+        print("  raw data or feature code changed since the cache was built — rebuilding")
+    return v2.build_cache(verbose=verbose, features=features)
 
 
 # =============================================================================
@@ -93,19 +99,21 @@ def _thaw(state: rf.FeatureState) -> rf.FeatureState:
     return state
 
 
-def live_state(verbose=True) -> rf.FeatureState:
+def live_state(market: bool = False, verbose=True) -> rf.FeatureState:
     """FeatureState after every completed match in data/, i.e. ready to
     featurize any fixture on a later day."""
     fp = raw_fingerprint()
-    path = os.path.join(STATE_DIR, f'state_{rf.VERSION}_{fp[:16]}.pkl')
+    version = rf.version(market)
+    path = os.path.join(STATE_DIR, f'state_{version}_{fp[:16]}.pkl')
     if os.path.isfile(path):
         return _thaw(joblib.load(path))
     t0 = time.time()
     raw, _ = rf.load_raw()
-    _, state = rf.replay(raw)
+    _, state = rf.replay(raw, rf.FeatureState(market=market))
     os.makedirs(STATE_DIR, exist_ok=True)
-    for old in os.listdir(STATE_DIR):                 # keep only the current one
-        os.remove(os.path.join(STATE_DIR, old))
+    for old in os.listdir(STATE_DIR):     # keep only current states per version
+        if old.startswith(f'state_{version}_'):
+            os.remove(os.path.join(STATE_DIR, old))
     joblib.dump(_freeze(state), path)
     if verbose:
         print(f"  replayed {len(raw):,} matches into a live state in "
@@ -125,7 +133,8 @@ def _git_head() -> str:
 
 
 def build(recipe: dict, tag: str | None = None) -> str:
-    frame = fresh_cache()
+    features = feature_set(recipe)
+    frame = fresh_cache(features)
     last = frame.Date.max()
     asof = last + pd.Timedelta(days=1)
     tag = tag or f"{pd.Timestamp.now():%Y-%m-%d}_{recipe['name']}"
@@ -136,14 +145,15 @@ def build(recipe: dict, tag: str | None = None) -> str:
     model, info = v2.fit_window(recipe, frame, asof)
     os.makedirs(out_dir)
     joblib.dump(model, os.path.join(out_dir, 'model.joblib'))
-    with open(v2.CACHE + '.json') as f:
+    with open(v2.cache_path(features) + '.json') as f:
         cache_meta = json.load(f)
     meta = {
         'tag': tag,
         'built_at': pd.Timestamp.now().isoformat(timespec='seconds'),
         'git_head': _git_head(),
         'recipe': recipe,
-        'feature_version': rf.VERSION,
+        'feature_set': features,
+        'feature_version': rf.version(features == 'mkt'),
         'trained_through': str(last.date()),
         'n_fit': info['n_fit'], 'n_cal': info['n_cal'],
         'temperature': model.temperature,
@@ -175,9 +185,10 @@ def load_bundle(tag: str | None = None):
     d = os.path.join(v2.MODEL_DIR, tag)
     with open(os.path.join(d, 'meta.json')) as f:
         meta = json.load(f)
-    if meta['feature_version'] != rf.VERSION:
+    expected = rf.version(meta.get('feature_set', 'v1') == 'mkt')
+    if meta['feature_version'] != expected:
         sys.exit(f"  bundle {tag} was built for features {meta['feature_version']}, "
-                 f"code is {rf.VERSION} — rebuild it")
+                 f"code is {expected} — rebuild it")
     return joblib.load(os.path.join(d, 'model.joblib')), meta
 
 
@@ -197,7 +208,7 @@ def featurize(fixtures: pd.DataFrame, state: rf.FeatureState) -> pd.DataFrame:
 def predict(fixtures: pd.DataFrame, tag: str | None = None,
             state: rf.FeatureState | None = None) -> pd.DataFrame:
     model, meta = load_bundle(tag)
-    state = state or live_state()
+    state = state or live_state(market=meta.get('feature_set') == 'mkt')
     feats = featurize(fixtures, state)
     if feats.empty:
         return feats

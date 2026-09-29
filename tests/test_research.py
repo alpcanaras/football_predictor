@@ -20,6 +20,52 @@ def match(day, home='A', away='B', hg=1, ag=0, **extra):
                 SeasonId=season_id('british_pl', day), **extra)
 
 
+def priced(day, home='A', away='B', hg=1, ag=0, close=(2.0, 3.4, 3.8), **extra):
+    """A match with average closing odds (H, D, A)."""
+    return match(day, home, away, hg, ag, AvgCH=close[0], AvgCD=close[1],
+                 AvgCA=close[2], **extra)
+
+
+class MarketFeatures(unittest.TestCase):
+    """The market block reads prices only after a match is finished."""
+    M = feature_columns(market=True)
+
+    def replay_m(self, raw):
+        return replay(raw, FeatureState(market=True))
+
+    def test_own_and_future_prices_cannot_change_features(self):
+        raw = pd.DataFrame([priced('2025-08-01'), priced('2025-08-08', 'B', 'A'),
+                            priced('2025-08-15'), priced('2025-08-22', 'B', 'A')])
+        original, _ = self.replay_m(raw)
+        changed = raw.copy()
+        changed.loc[2, ['AvgCH', 'AvgCD', 'AvgCA']] = [1.05, 15.0, 40.0]
+        actual, _ = self.replay_m(changed)
+        # rows 0-2 (including the repriced match itself) are unchanged ...
+        pd.testing.assert_frame_equal(original.loc[:2, self.M], actual.loc[:2, self.M])
+        # ... and only the match after it sees the new price
+        self.assertNotEqual(original.loc[3, 'MktRatingDiff'], actual.loc[3, 'MktRatingDiff'])
+
+    def test_rating_follows_the_market_not_the_result(self):
+        # A is priced as a huge favourite but loses: the market rating still
+        # rises (it is a rating of prices), while results Elo falls
+        raw = pd.DataFrame([priced('2025-08-01', hg=0, ag=1, close=(1.2, 7.0, 15.0)),
+                            priced('2025-08-08')])
+        out, state = self.replay_m(raw)
+        self.assertGreater(out.loc[1, 'MktRatingDiff'], 0)
+        self.assertLess(out.loc[1, 'EloDiff'], 0)
+        self.assertEqual(out.loc[1, 'HomeMktN'], 1)
+
+    def test_unpriced_match_leaves_ratings_alone(self):
+        raw = pd.DataFrame([match('2025-08-01'), priced('2025-08-08')])
+        out, _ = self.replay_m(raw)
+        self.assertTrue(np.isnan(out.loc[1, 'MktRatingDiff']))
+        self.assertEqual(out.loc[1, 'HomeMktN'], 0)
+
+    def test_default_state_has_no_market_columns(self):
+        self.assertFalse(set(self.M[len(feature_columns()):]) & set(feature_columns()))
+        self.assertEqual(self.M[:len(feature_columns())], feature_columns())
+
+
 class CausalFeatures(unittest.TestCase):
     def test_future_results_cannot_change_earlier_features(self):
         raw = pd.DataFrame([match('2025-08-01'), match('2025-08-08', hg=0, ag=2),

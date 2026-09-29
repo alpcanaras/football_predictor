@@ -46,6 +46,15 @@ ROOT = config.PROJECT_ROOT
 REPORT_DIR = os.path.join(ROOT, 'reports', 'v2')
 MODEL_DIR = os.path.join(ROOT, 'models', 'v2')
 CACHE = os.path.join(REPORT_DIR, 'features.pkl')
+# Feature sets: 'v1' is the research engine as-is; 'mkt' adds ratings fitted
+# to past pre-match prices (research_features.FeatureState(market=True)).
+FEATURE_SETS = ('v1', 'mkt')
+
+
+def cache_path(features: str = 'v1') -> str:
+    if features not in FEATURE_SETS:
+        raise ValueError(f'unknown feature set {features!r}')
+    return CACHE if features == 'v1' else CACHE.replace('.pkl', f'_{features}.pkl')
 
 TEST_STARTS = ['2024-01-01', '2024-07-01', '2025-01-01',
                '2025-07-01', '2026-01-01', '2026-07-01']
@@ -81,13 +90,14 @@ def _teacher_probs(df: pd.DataFrame) -> dict[str, np.ndarray]:
     return out
 
 
-def build_cache(verbose=True) -> pd.DataFrame:
+def build_cache(verbose=True, features: str = 'v1') -> pd.DataFrame:
+    path = cache_path(features)
     t0 = time.time()
     raw, manifest = rf.load_raw()
     if verbose:
         print(f"  loaded {len(raw):,} matches in {time.time()-t0:.0f}s; replaying…")
     t1 = time.time()
-    feats, _ = rf.replay(raw)
+    feats, _ = rf.replay(raw, rf.FeatureState(market=features == 'mkt'))
     if verbose:
         print(f"  replayed in {time.time()-t1:.0f}s")
     feats = feats.sort_values(['Date'] + rf.KEY[:1] + rf.KEY[2:],
@@ -96,10 +106,11 @@ def build_cache(verbose=True) -> pd.DataFrame:
         for k, c in enumerate('ADH'):
             feats[f't_{name}_{c}'] = p[:, k]
     os.makedirs(REPORT_DIR, exist_ok=True)
-    feats.to_pickle(CACHE)
+    feats.to_pickle(path)
     meta = {
         'built_at': pd.Timestamp.now().isoformat(timespec='seconds'),
-        'feature_version': rf.VERSION,
+        'feature_set': features,
+        'feature_version': rf.version(features == 'mkt'),
         'n_matches': int(len(feats)),
         'date_min': str(feats.Date.min().date()),
         'date_max': str(feats.Date.max().date()),
@@ -107,17 +118,18 @@ def build_cache(verbose=True) -> pd.DataFrame:
             json.dumps(manifest, sort_keys=True).encode()).hexdigest(),
         'n_raw_files': len(manifest),
     }
-    with open(CACHE + '.json', 'w') as f:
+    with open(path + '.json', 'w') as f:
         json.dump(meta, f, indent=2)
     if verbose:
-        print(f"  cached {len(feats):,} rows x {feats.shape[1]} cols -> {CACHE}")
+        print(f"  cached {len(feats):,} rows x {feats.shape[1]} cols -> {path}")
     return feats
 
 
-def load_cache() -> pd.DataFrame:
-    if not os.path.isfile(CACHE):
-        return build_cache()
-    return pd.read_pickle(CACHE)
+def load_cache(features: str = 'v1') -> pd.DataFrame:
+    path = cache_path(features)
+    if not os.path.isfile(path):
+        return build_cache(features=features)
+    return pd.read_pickle(path)
 
 
 # =============================================================================
@@ -130,7 +142,7 @@ RUN_DIR = os.path.join(REPORT_DIR, 'runs')
 BASELINE = dict(
     name='baseline_research', engine='xgb', target='hard', teacher=None,
     alpha=0.0, half_life=500.0, lookback_days=1460, cal_days=90,
-    calib='temperature',
+    calib='temperature', features='v1',
     params=dict(n_estimators=250, max_depth=3, learning_rate=.035,
                 min_child_weight=30, reg_lambda=10, reg_alpha=.1,
                 subsample=.85, colsample_bytree=.85),
@@ -141,9 +153,11 @@ def labels(df: pd.DataFrame) -> np.ndarray:
     return df.FTR.map({'A': 0, 'D': 1, 'H': 2}).to_numpy(int)
 
 
-def matrix(df: pd.DataFrame) -> pd.DataFrame:
-    """Causal features + a one-hot per registered league (fixed schema)."""
-    x = df[rf.feature_columns()].astype(float).reset_index(drop=True)
+def matrix(df: pd.DataFrame, recipe: dict | None = None) -> pd.DataFrame:
+    """Causal features + a one-hot per registered league (fixed schema).
+    A missing feature column raises: never silently zero-fill a feature."""
+    market = (recipe or {}).get('features', 'v1') == 'mkt'
+    x = df[rf.feature_columns(market=market)].astype(float).reset_index(drop=True)
     for lg in sorted(config.LEAGUE_REGISTRY):
         x['league_' + lg] = (df.league.to_numpy() == lg).astype(float)
     return x
@@ -207,7 +221,7 @@ def _softmax(z):
 
 
 def fit_base(fit: pd.DataFrame, recipe: dict):
-    X = matrix(fit)
+    X = matrix(fit, recipe)
     w = decay_weights(fit.Date, recipe.get('half_life', 0))
     X3, y3, w3 = expand(X, soft_targets(fit, recipe), w)
     p = dict(recipe['params'])
@@ -249,12 +263,16 @@ class V2Model:
 
     def __init__(self, models, temperature, columns, recipe, asof):
         self.models, self.temperature = models, float(temperature)
-        self.columns, self.recipe, self.asof = list(columns), recipe, str(asof)
+        self.columns = [list(c) for c in columns]          # one list per member
+        self.recipe, self.asof = recipe, str(asof)
+        self.members = recipe.get('members') or [recipe]
 
     def raw_proba(self, df: pd.DataFrame) -> np.ndarray:
         # reindex: a league registered after training gets all-zero one-hots
-        X = matrix(df).reindex(columns=self.columns, fill_value=0.0)
-        return np.mean([m.predict_proba(X) for m in self.models], axis=0)
+        # (features themselves are never filled: matrix() raises if missing)
+        return np.mean([m.predict_proba(matrix(df, r).reindex(columns=c, fill_value=0.0))
+                        for m, r, c in zip(self.models, self.members, self.columns)],
+                       axis=0)
 
     def predict_proba(self, df: pd.DataFrame) -> np.ndarray:
         """Class order [A, D, H]."""
@@ -267,12 +285,13 @@ def fit_window(recipe: dict, frame: pd.DataFrame, asof) -> tuple[V2Model, dict]:
     the shared calibration window (the last cal_days before `asof`)."""
     members = recipe.get('members') or [recipe]
     cal_days = recipe.get('cal_days', 90)
-    models, pcs, info = [], [], {}
+    models, pcs, cols, info = [], [], [], {}
     for r in members:
         fit, cal, _ = split(frame, asof, test_days=1, cal_days=cal_days,
                             lookback_days=r['lookback_days'])
         m = fit_base(fit, r)
-        pcs.append(m.predict_proba(matrix(cal)))
+        pcs.append(m.predict_proba(matrix(cal, r)))
+        cols.append(matrix(cal.head(1), r).columns)
         if r.get('refit'):
             # the calibration window only chose T; refit the trees on it too
             # so the served model has seen the most recent days
@@ -282,14 +301,16 @@ def fit_window(recipe: dict, frame: pd.DataFrame, asof) -> tuple[V2Model, dict]:
     temp = 1.0
     if recipe.get('calib', 'temperature') == 'temperature':
         temp = fit_temperature(np.mean(pcs, axis=0), labels(cal))
-    return V2Model(models, temp, matrix(cal.head(1)).columns, recipe, asof), info
+    return V2Model(models, temp, cols, recipe, asof), info
 
 
 def run(recipe: dict, frame: pd.DataFrame | None = None,
         starts=TEST_STARTS, save=True, verbose=True,
         test_days=TEST_DAYS) -> pd.DataFrame:
     """Score a recipe on every outer window; returns one row per test match."""
-    frame = load_cache() if frame is None else frame
+    feats = {r.get('features', 'v1') for r in recipe.get('members') or [recipe]}
+    if frame is None:
+        frame = load_cache('mkt' if 'mkt' in feats else 'v1')
     rows = []
     t_all = time.time()
     for s in starts:
@@ -372,6 +393,10 @@ def variant(**changes) -> dict:
     return r
 
 
+# chosen on the tuning windows by the 'distill' experiment (a=0.5 best there)
+BEST_DISTILL = dict(target='soft', teacher='avg_close', alpha=.5)
+
+
 EXPERIMENTS = {
     # E1: learn the market's function of football features, not raw results
     'distill': [
@@ -381,14 +406,23 @@ EXPERIMENTS = {
         variant(name='d_pinclose_a100', target='soft', teacher='pinnacle_close', alpha=1.0),
         variant(name='d_avgpre_a100', target='soft', teacher='avg_pre', alpha=1.0),
     ],
+    # E2: ratings fitted to past pre-match prices, on top of distillation
+    'mktfeat': [
+        variant(name='d_avgclose_a50', **BEST_DISTILL),
+        variant(name='mkt_d_avgclose_a50', features='mkt', **BEST_DISTILL),
+        variant(name='mkt_hard', features='mkt'),
+    ],
 }
 
 
 def run_experiment(name: str):
     """Run each recipe on the tuning windows (to choose) and the test windows
     (to confirm), always paired against the baseline on the same matches."""
-    frame = load_cache()
     recipes = EXPERIMENTS[name]
+    need_mkt = any(m.get('features') == 'mkt' for r in recipes
+                   for m in (r.get('members') or [r]))
+    # the mkt cache is the v1 cache plus extra columns, so it serves both
+    frame = load_cache('mkt' if need_mkt else 'v1')
     out = {}
     for tag, starts in (('tune', TUNE_STARTS), ('test', TEST_STARTS)):
         base_name = f"{BASELINE['name']}__{tag}"
@@ -419,13 +453,12 @@ def run_experiment(name: str):
 # =============================================================================
 # HYPERPARAMETER SEARCH  (tuning windows only — never the test windows)
 # =============================================================================
-BEST_DISTILL = dict(target='soft', teacher='avg_close', alpha=.5)
 OPTUNA_DB = 'sqlite:///' + os.path.join(REPORT_DIR, 'optuna.db')
 
 
-def _trial_recipe(trial, engine: str) -> dict:
+def _trial_recipe(trial, engine: str, features: str = 'v1') -> dict:
     r = variant(name=f'trial_{engine}_{trial.number}', engine=engine,
-                **BEST_DISTILL)
+                features=features, **BEST_DISTILL)
     r['alpha'] = trial.suggest_float('alpha', .3, 1.0)
     r['half_life'] = trial.suggest_categorical(
         'half_life', [0.0, 250.0, 500.0, 1000.0, 2000.0])
@@ -459,13 +492,13 @@ def _trial_recipe(trial, engine: str) -> dict:
     return r
 
 
-def tune(engine='xgb', n_trials=100):
+def tune(engine='xgb', n_trials=100, features='v1'):
     import optuna
-    frame = load_cache()
+    frame = load_cache(features)
     frame = frame[frame.Date < TUNE_END]          # hard wall: no test data
 
     def objective(trial):
-        r = _trial_recipe(trial, engine)
+        r = _trial_recipe(trial, engine, features)
         losses = []
         for k, s in enumerate(TUNE_STARTS):
             res = run(r, frame, [s], save=False, verbose=False)
@@ -476,15 +509,24 @@ def tune(engine='xgb', n_trials=100):
         return float(np.mean(losses))
 
     study = optuna.create_study(
-        study_name=f'v2_{engine}_distill', storage=OPTUNA_DB,
+        study_name=f'v2_{engine}_distill' + ('' if features == 'v1' else f'_{features}'),
+        storage=OPTUNA_DB,
         load_if_exists=True, direction='minimize',
         sampler=optuna.samplers.TPESampler(seed=42, multivariate=True),
         pruner=optuna.pruners.MedianPruner(n_startup_trials=10, n_warmup_steps=1))
     if len(study.trials) == 0 and engine == 'xgb':
-        # start from the two known reference points
+        # start from the known reference points: the distilled baseline, and
+        # the best settings a finished v1-feature search found (if any)
         b = BASELINE['params']
         study.enqueue_trial({**b, 'gamma': 0.0, 'alpha': .5,
                              'half_life': 500.0, 'lookback_days': 1460})
+        if features != 'v1':
+            try:
+                prior = optuna.load_study(study_name='v2_xgb_distill',
+                                          storage=OPTUNA_DB)
+                study.enqueue_trial(prior.best_params)
+            except Exception:
+                pass
     study.optimize(objective, n_trials=n_trials, gc_after_trial=True,
                    show_progress_bar=False)
     best = study.best_trial
@@ -499,11 +541,12 @@ def main():
     ap.add_argument('name', nargs='?')
     ap.add_argument('--engine', default='xgb', choices=['xgb', 'lgbm'])
     ap.add_argument('--trials', type=int, default=100)
+    ap.add_argument('--features', default='v1', choices=FEATURE_SETS)
     a = ap.parse_args()
     if a.command == 'cache':
-        build_cache()
+        build_cache(features=a.features)
     elif a.command == 'tune':
-        tune(a.engine, a.trials)
+        tune(a.engine, a.trials, a.features)
     elif a.command == 'exp':
         run_experiment(a.name)
     elif a.command == 'baseline':

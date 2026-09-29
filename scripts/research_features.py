@@ -19,6 +19,16 @@ import pandas as pd
 from scripts import config, data_loader
 
 VERSION = 'causal-day-state-v1'
+MARKET_VERSION = VERSION + '+mkt2'     # FeatureState(market=True)
+# Prices a finished match is rated from, best first. Closing prices are
+# allowed HERE because the update runs after the match is complete: they are
+# history by then, like the score. (99.9% of matches carry the average close;
+# pre-match prices exist for only the rich leagues.)
+RATING_ODDS = [('AvgCH', 'AvgCD', 'AvgCA'), ('PSCH', 'PSCD', 'PSCA'),
+               ('B365CH', 'B365CD', 'B365CA')]
+MKT_K = 40.0              # prices are far less noisy than results: move faster
+MKT_RETENTION = 0.9
+MKT_HOME_ADV = 60.0
 CALENDAR_LEAGUES = {'argentina', 'BRAZIL', 'chn', 'fin', 'japan', 'norsk',
                    'irish', 'swedish', 'usa'}
 KEY = ['league', 'Date', 'HomeTeam', 'AwayTeam']
@@ -126,6 +136,12 @@ class Team:
     matches: deque = field(default_factory=lambda: deque(maxlen=10))
     home: deque = field(default_factory=lambda: deque(maxlen=10))
     away: deque = field(default_factory=lambda: deque(maxlen=10))
+    # market block (FeatureState(market=True) only): a rating fitted to past
+    # pre-match prices instead of results, and what those prices said
+    mkt_rating: float = 1500.0
+    mkt_season: str | None = None
+    mkt_n: int = 0
+    mkt_hist: deque = field(default_factory=lambda: deque(maxlen=10))
 
 
 def mean(values):
@@ -141,10 +157,13 @@ class FeatureState:
     are silently transferred between incompatible league strength scales.
     Feature lookup is read-only, including season regression.
     """
-    def __init__(self, k=20.0, season_retention=0.85):
+    def __init__(self, k=20.0, season_retention=0.85, market=False,
+                 mkt_k=MKT_K, mkt_retention=MKT_RETENTION):
         if not 0 <= season_retention <= 1 or k <= 0:
             raise ValueError('Invalid Elo settings')
         self.k, self.season_retention = float(k), float(season_retention)
+        self.market = bool(market)
+        self.mkt_k, self.mkt_retention = float(mkt_k), float(mkt_retention)
         self.teams = {}
         self.league_results = defaultdict(lambda: deque(maxlen=150))
         self.h2h = defaultdict(lambda: deque(maxlen=6))
@@ -185,7 +204,61 @@ class FeatureState:
         result['H2HGoalDiff'] = mean((hg-ag if home == row['HomeTeam'] else ag-hg)
                                    for home, hg, ag in history)
         result['LeagueHomeRate'] = mean(self.league_results.get(league, []))
+        if self.market:
+            result.update(self._market_features(h, a, season))
         return result
+
+    # ------------------------------------------------------------------ market
+    # Past prices are facts once a match is played, so a rating fitted to them
+    # is as causal as Elo. It carries the market's opinion of a team into
+    # fixtures that have no price of their own, which is exactly where the
+    # model is used. A fixture's own prices are never read: the rating only
+    # moves in update_day, after the match is finished.
+    def _mkt_rating(self, team, season):
+        return (1500 + self.mkt_retention * (team.mkt_rating - 1500)
+                if team.mkt_season is not None and team.mkt_season != season
+                else team.mkt_rating)
+
+    def _market_features(self, h, a, season):
+        out = {'MktRatingDiff': (self._mkt_rating(h, season) - self._mkt_rating(a, season)
+                                 if h.mkt_n and a.mkt_n else np.nan)}
+        for prefix, team in (('Home', h), ('Away', a)):
+            out[prefix + 'MktN'] = min(team.mkt_n, 50)
+            out[prefix + '_mktdraw_10'] = mean(d for d, _ in team.mkt_hist)
+            out[prefix + '_mktresid_10'] = mean(r for _, r in team.mkt_hist)
+        return out
+
+    @staticmethod
+    def _rating_probs(row):
+        """Margin-free (A, D, H) from the best available price, or None."""
+        for triple in RATING_ODDS:
+            try:
+                odds = np.array([float(row.get(c, np.nan)) for c in triple])
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(odds).all() and (odds > 1).all():
+                inv = 1 / odds
+                ph, pd_, pa = inv / inv.sum()
+                return pa, pd_, ph
+        q = [row.get(c, np.nan) for c in ('qA', 'qD', 'qH')]
+        return tuple(q) if np.all(np.isfinite(q)) else None
+
+    def _market_update(self, row, h, a, season, hg, ag):
+        q = self._rating_probs(row)
+        if q is None:
+            return
+        qa, qd, qh = q
+        hr, ar = self._mkt_rating(h, season), self._mkt_rating(a, season)
+        expected = 1 / (1 + 10 ** ((ar - hr - MKT_HOME_ADV) / 400))
+        delta = self.mkt_k * ((qh + .5 * qd) - expected)
+        h_pts = 3 if hg > ag else int(hg == ag)
+        a_pts = 3 if ag > hg else int(hg == ag)
+        for team, rating, pts, exp_pts in (
+                (h, hr + delta, h_pts, 3 * qh + qd),
+                (a, ar - delta, a_pts, 3 * qa + qd)):
+            team.mkt_rating, team.mkt_season = rating, season
+            team.mkt_n += 1
+            team.mkt_hist.append((qd, pts - exp_pts))
 
     def update_day(self, block):
         days = pd.to_datetime(block['Date']).dt.normalize().unique()
@@ -210,6 +283,8 @@ class FeatureState:
             hg, ag = float(row['FTHG']), float(row['FTAG'])
             if not np.isfinite([hg, ag]).all() or min(hg, ag) < 0:
                 raise ValueError('Cannot update from an unplayed or invalid result')
+            if self.market:
+                self._market_update(row, h, a, season, hg, ag)
             win = 1.0 if hg > ag else (0.5 if hg == ag else 0.0)
             delta = self.k * (win - 1/(1+10**((ar-hr-60)/400)))
             for team, prefix, gf, ga, rating, opponent, points, venue in [
@@ -246,6 +321,10 @@ def replay(raw, state=None):
     return pd.concat(frames).reset_index(drop=True), state
 
 
-def feature_columns():
+def feature_columns(market=False):
     dummy = dict(Date='2000-01-01', league='british_pl', HomeTeam='H', AwayTeam='A')
-    return list(FeatureState().fixture(dummy))
+    return list(FeatureState(market=market).fixture(dummy))
+
+
+def version(market=False):
+    return MARKET_VERSION if market else VERSION

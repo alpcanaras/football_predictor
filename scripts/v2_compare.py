@@ -23,6 +23,7 @@ The market (Shin-de-vigged pre-match average odds) is scored on the same
 matches: when odds exist it is what the app actually plays.
 
     python -m scripts.v2_compare                       # distilled baseline
+    python -m scripts.v2_compare --features mkt        # ... with market ratings
     python -m scripts.v2_compare --recipe reports/v2/selected_recipe.json
 """
 
@@ -183,16 +184,20 @@ def report(j: pd.DataFrame, prod_cols, label: str) -> dict:
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[1])
     ap.add_argument('--recipe', help='JSON recipe (default: distilled baseline)')
+    ap.add_argument('--features', default='v1', choices=v2.FEATURE_SETS,
+                    help='feature set for the default recipe')
     args = ap.parse_args()
     if args.recipe:
         with open(args.recipe) as f:
             recipe = json.load(f)
     else:
-        recipe = v2.variant(name='distilled_baseline', **v2.BEST_DISTILL)
+        name = 'distilled_baseline' + ('' if args.features == 'v1' else f'_{args.features}')
+        recipe = v2.variant(name=name, features=args.features, **v2.BEST_DISTILL)
     print(f"  recipe: {recipe['name']} ({recipe['engine']})")
 
     prod = production_pool()
-    frame = v2.load_cache()
+    from scripts.v2_bundle import feature_set
+    frame = v2.load_cache(feature_set(recipe))
     results = {'recipe': recipe, 'data_max': str(frame.Date.max().date())}
 
     # per-league pool: v2 as of the earliest production cutoff in it
