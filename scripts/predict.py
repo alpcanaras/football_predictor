@@ -137,10 +137,11 @@ def _market_anchor(predictions: dict, league: str,
             w = json.load(f)['with_odds']
         w_model, w_book = float(w['model']), float(w['book'])
     except Exception:
-        w_model, w_book = 0.0, 1.0
+        w_model, w_book = 0.0, 1.11
 
-    from scripts import market
-    book = market.shin([odds['OddsH'], odds['OddsD'], odds['OddsA']])
+    inv = np.array([1.0 / odds['OddsH'], 1.0 / odds['OddsD'],
+                    1.0 / odds['OddsA']])
+    book = inv / inv.sum()
     p = predictions['1x2']
     model = np.array([p['home'], p['draw'], p['away']])
 

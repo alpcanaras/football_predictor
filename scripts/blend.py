@@ -3,7 +3,7 @@ Probability Blending Layer (1X2)
 =================================
 Log-pools three probability sources per match:
   - GBM ensemble (xgb + lgbm averaged, mirroring predict.py)
-  - bookmaker implied probabilities (Shin de-vig, scripts/market.py)
+  - bookmaker implied probabilities (normalised 1/odds)
   - Dixon-Coles baseline (refit monthly, leak-free)
 
 blended  p  ∝  p_model^w1 · p_book^w2 · p_dc^w3      (weights >= 0)
@@ -92,14 +92,13 @@ def ensemble_proba_market(market: str, league: str,
 
 
 def implied_proba(df: pd.DataFrame) -> np.ndarray:
-    """Margin-free probabilities in class order (A, D, H), via Shin's method
-    (scripts/market.py). NaN rows stay NaN."""
-    from scripts import market
-    return market.shin(np.column_stack([
-        df['OddsA'].to_numpy(float),
-        df['OddsD'].to_numpy(float),
-        df['OddsH'].to_numpy(float),
-    ]))
+    """Normalised 1/odds in class order (A, D, H). NaN rows stay NaN."""
+    inv = np.column_stack([
+        1.0 / df['OddsA'].to_numpy(float),
+        1.0 / df['OddsD'].to_numpy(float),
+        1.0 / df['OddsH'].to_numpy(float),
+    ])
+    return inv / inv.sum(axis=1, keepdims=True)
 
 
 def dc_proba(league_df: pd.DataFrame, target: pd.DataFrame) -> np.ndarray:
