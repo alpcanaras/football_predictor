@@ -177,9 +177,10 @@ def build(recipe: dict, tag: str | None = None) -> str:
 
 
 def load_bundle(tag: str | None = None):
+    """(V2Model, meta). Raises (never exits) so the app can fall back to v1."""
     if tag is None:
         if not os.path.isfile(LATEST):
-            sys.exit("  no v2 bundle yet — run: python -m scripts.v2_bundle build")
+            raise FileNotFoundError("no v2 bundle yet — run: python -m scripts.v2_bundle build")
         with open(LATEST) as f:
             tag = f.read().strip()
     d = os.path.join(v2.MODEL_DIR, tag)
@@ -187,9 +188,84 @@ def load_bundle(tag: str | None = None):
         meta = json.load(f)
     expected = rf.version(meta.get('feature_set', 'v1') == 'mkt')
     if meta['feature_version'] != expected:
-        sys.exit(f"  bundle {tag} was built for features {meta['feature_version']}, "
-                 f"code is {expected} — rebuild it")
+        raise RuntimeError(f"bundle {tag} was built for features {meta['feature_version']}, "
+                           f"code is {expected} — rebuild it")
     return joblib.load(os.path.join(d, 'model.joblib')), meta
+
+
+# =============================================================================
+# SERVING  (what the app calls: one league's state at a time, kept in memory)
+# =============================================================================
+# FeatureState is league-scoped (teams, H2H, league rates, both ratings), so a
+# replay of one league's files gives exactly the features a full replay gives
+# for that league (verified: identical on all 2,224 Turkish matches) — in a
+# few seconds instead of a minute.
+_SERVE: dict = {}
+
+
+def _files_key(league: str) -> tuple:
+    return tuple((p.name, p.stat().st_mtime_ns, p.stat().st_size)
+                 for p in sorted(Path(config.DATA_DIR, league).glob('*.csv')))
+
+
+def serving_bundle():
+    if 'bundle' not in _SERVE:
+        _SERVE['bundle'] = load_bundle()
+    return _SERVE['bundle']
+
+
+def serving_state(league: str, market: bool = True) -> rf.FeatureState:
+    """Live state for one league, rebuilt only when its data files change."""
+    key = (league, market, _files_key(league))
+    hit = _SERVE.get(('state', league))
+    if hit is None or hit[0] != key:
+        # disk copy survives app restarts; its name pins data + feature code
+        digest = hashlib.sha256(repr((key, rf.version(market))).encode()).hexdigest()[:16]
+        path = os.path.join(STATE_DIR, f'serve_{league}_{digest}.pkl')
+        state = None
+        if os.path.isfile(path):
+            try:
+                state = _thaw(joblib.load(path))
+            except Exception:
+                state = None
+        if state is None:
+            raw, _ = rf.load_raw([league])
+            _, state = rf.replay(raw, rf.FeatureState(market=market))
+            try:
+                os.makedirs(STATE_DIR, exist_ok=True)
+                for old in os.listdir(STATE_DIR):          # this league's stale copies
+                    if old.startswith(f'serve_{league}_'):
+                        os.remove(os.path.join(STATE_DIR, old))
+                joblib.dump(_freeze(state), path)
+            except OSError:
+                pass
+        _SERVE[('state', league)] = hit = (key, state)
+    return hit[1]
+
+
+def predict_one(league: str, home: str, away: str, date=None) -> dict | None:
+    """v2 1X2 for one fixture as {'home', 'draw', 'away'}, or None when v2
+    cannot serve it (no bundle, unknown league or team)."""
+    if league not in config.LEAGUE_REGISTRY:
+        return None
+    model, meta = serving_bundle()
+    state = serving_state(league, meta.get('feature_set') == 'mkt')
+    if (league, home) not in state.teams or (league, away) not in state.teams:
+        return None
+    day = pd.Timestamp(date if date is not None else pd.Timestamp.now()).normalize()
+    day = max(day, state.last_day + pd.Timedelta(days=1))   # after known results
+    row = {'Date': day, 'league': league, 'HomeTeam': home, 'AwayTeam': away}
+    p = model.predict_proba(pd.DataFrame([dict(state.fixture(row), **row)]))[0]
+    return {'home': float(p[2]), 'draw': float(p[1]), 'away': float(p[0])}
+
+
+def serving_info() -> dict:
+    """Short description for the UI: which bundle, trained through when."""
+    try:
+        _, meta = serving_bundle()
+        return {'tag': meta['tag'], 'trained_through': meta['trained_through'], 'ok': True}
+    except Exception as e:
+        return {'ok': False, 'error': str(e)}
 
 
 # =============================================================================
