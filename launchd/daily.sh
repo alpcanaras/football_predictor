@@ -30,6 +30,12 @@ $PY scripts/clubs_europe.py update >/dev/null 2>&1 \
 $PY scripts/international.py update >/dev/null 2>&1 \
     && echo "  internationals ok" || echo "  internationals refresh FAILED"
 
+# Log v1 / v2 / market side by side on the coming week's fixtures and grade
+# what has been played — the evidence for (or against) promoting v2 further.
+$PY -m scripts.v2_bundle shadow --days 7 >/dev/null 2>&1 \
+    && echo "  v2 shadow log ok" || echo "  v2 shadow log FAILED"
+$PY -m scripts.v2_bundle grade 2>/dev/null | sed 's/^/  /'
+
 echo "  --- health check ---"
 $PY scripts/selftest.py --quick
 test_rc=$?
