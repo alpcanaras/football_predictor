@@ -559,6 +559,64 @@ def check_app() -> None:
             os.environ.pop('FOOTBALL_PREDICTOR_TOTO_DIR', None)
 
 
+def check_webapp() -> None:
+    """The web app's API end to end: boots, prices every kind of coupon row,
+    builds a ticket around a locked pick, round-trips a coupon — all against
+    a scratch coupon directory, never the real one."""
+    try:
+        from starlette.testclient import TestClient
+    except Exception as e:
+        record(WARN, 'web app', f'starlette test client unavailable: {e}')
+        return
+    import importlib
+    with tempfile.TemporaryDirectory() as tmp:
+        os.environ['FOOTBALL_PREDICTOR_TOTO_DIR'] = tmp
+        try:
+            from webapp import engine as eng_mod
+            eng_mod = importlib.reload(eng_mod)          # read the scratch dir
+            from webapp import server
+            server = importlib.reload(server)
+            client = TestClient(server.create_app(start_engine=False))
+            eng_mod.ENGINE.load()
+            problems = []
+            if client.get('/api/status').json().get('state') != 'ready':
+                problems.append('not ready')
+            if 'Football Predictor' not in client.get('/').text:
+                problems.append('index page')
+            rows = [('Galatasaray', 'Fenerbahce', None), ('Bayern Munich', 'Dortmund', [1.5, 4.6, 6.0]),
+                    ('Turkey', 'France', None), ('Fenerbache', 'Besiktas', None)]
+            got = [client.post('/api/analyze', json={'home': h, 'away': a, 'odds': o}).json()
+                   for h, a, o in rows]
+            src = [g.get('src') for g in got]
+            if src[0] not in ('v1', 'v2', 'feed') or not (got[0].get('v1') and got[0].get('v2')):
+                problems.append(f'club row {src[0]}')
+            if src[1] != 'odds':
+                problems.append(f'odds row {src[1]}')
+            if src[2] != 'intl':
+                problems.append(f'national row {src[2]}')
+            if src[3] != 'none' or 'Fenerbahce' not in got[3]['suggest']['home']:
+                problems.append('unknown name not flagged with a suggestion')
+            probs = [g['probs'] for g in got[:3]]
+            t = client.post('/api/ticket', json={'game': 'german', 'probs': probs, 'budget': 4,
+                                                 'locks': [None, 'X2', None]}).json()
+            if t.get('labels', [None, None])[1] != 'X2' or t.get('columns', 99) > 4:
+                problems.append(f'locked ticket {t.get("labels")}')
+            body = {'rows': [{'home': 'Norway', 'away': 'Italy', 'odds': [2.1, 3.3, 3.4],
+                              'crowd': [40, 30, 30], 'lock': '1X'}], 'budget': 8}
+            client.put('/api/coupon/german', json=body)
+            back = client.get('/api/coupon/german').json()
+            r0 = (back.get('rows') or [{}])[0]
+            if (r0.get('lock'), r0.get('crowd'), back.get('budget')) != ('1X', [40.0, 30.0, 30.0], 8):
+                problems.append('coupon round-trip')
+            record(PASS if not problems else FAIL, 'web app API',
+                   'boots, prices club/odds/nations/unknown rows, locked ticket, coupon round-trip'
+                   if not problems else '; '.join(problems))
+        except Exception as e:
+            record(FAIL, 'web app API', f'{type(e).__name__}: {e}')
+        finally:
+            os.environ.pop('FOOTBALL_PREDICTOR_TOTO_DIR', None)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description='Predictor health check')
     ap.add_argument('--quick', action='store_true',
@@ -586,6 +644,7 @@ def main() -> int:
     check_international()
     if not args.quick:
         check_app()
+        check_webapp()
 
     fails = [r for r in _results if r[0] == FAIL]
     warns = [r for r in _results if r[0] == WARN]
