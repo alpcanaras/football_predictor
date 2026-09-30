@@ -142,6 +142,13 @@ def _model_probs(row, ctx):
         p = pred.get('1x2')
         if not p:
             return None
+        # keep both model versions for side-by-side display (see app.py)
+        ctx.setdefault('model_detail', {})[(str(row['home']), str(row['away']))] = {
+            'league': pred.get('league'),
+            'version': pred.get('model_version', 'v1'),
+            'feed_odds': 'market' in pred,
+            'v1': pred.get('1x2_v1'), 'v2': pred.get('1x2_v2'),
+        }
         return np.array([p['home'], p['draw'], p['away']])
     except Exception:
         return None

@@ -1,0 +1,379 @@
+{
+  "tag": "2026-09-30_sel_ens_mkt3",
+  "built_at": "2026-09-30T00:12:05",
+  "git_head": "4d27d9a",
+  "recipe": {
+    "name": "sel_ens_mkt",
+    "engine": "ensemble",
+    "members": [
+      {
+        "name": "sel_xgb_mkt",
+        "engine": "xgb",
+        "target": "soft",
+        "teacher": "avg_close",
+        "alpha": 0.8672219847560312,
+        "half_life": 2000.0,
+        "lookback_days": 1460,
+        "cal_days": 90,
+        "calib": "temperature",
+        "features": "mkt",
+        "params": {
+          "n_estimators": 227,
+          "max_depth": 7,
+          "learning_rate": 0.049379365483754586,
+          "min_child_weight": 42.6552964472082,
+          "reg_lambda": 0.40221544980586527,
+          "reg_alpha": 0.0024147568325744023,
+          "gamma": 0.21873289188420275,
+          "subsample": 0.819792913222377,
+          "colsample_bytree": 0.89471569761902
+        }
+      },
+      {
+        "name": "sel_lgbm_mkt",
+        "engine": "lgbm",
+        "target": "soft",
+        "teacher": "avg_close",
+        "alpha": 0.8669527205055292,
+        "half_life": 500.0,
+        "lookback_days": 1460,
+        "cal_days": 90,
+        "calib": "temperature",
+        "features": "mkt",
+        "params": {
+          "n_estimators": 863,
+          "num_leaves": 15,
+          "max_depth": 7,
+          "learning_rate": 0.022788554496473296,
+          "min_child_samples": 44,
+          "reg_lambda": 0.021261656335250855,
+          "reg_alpha": 0.512211433427073,
+          "subsample": 0.9150168142712293,
+          "colsample_bytree": 0.8920533237252427,
+          "subsample_freq": 1
+        }
+      }
+    ],
+    "cal_days": 90,
+    "calib": "temperature"
+  },
+  "feature_set": "mkt",
+  "feature_version": "causal-day-state-v1+mkt3",
+  "trained_through": "2026-09-28",
+  "n_fit": 46493,
+  "n_cal": 2620,
+  "temperature": 0.9733615626917884,
+  "data": {
+    "built_at": "2026-09-29T22:36:41",
+    "feature_set": "mkt",
+    "feature_version": "causal-day-state-v1+mkt3",
+    "n_matches": 99879,
+    "date_min": "2015-01-10",
+    "date_max": "2026-09-28",
+    "raw_files_sha256": "bd40d129e803f563ced99e1b0fc7bca62c8d9b3c881cad49dc871ae1d4978c81",
+    "n_raw_files": 170
+  },
+  "class_order": [
+    "A",
+    "D",
+    "H"
+  ],
+  "serving": "shadow only \u2014 the app still serves models/tier1",
+  "selection": {
+    "features": "mkt",
+    "tune": {
+      "mkt_d_avgclose_a50": {
+        "n": 24801,
+        "ll_all": 1.0070722103118896,
+        "ll_market_subset": 1.0017184019088745,
+        "n_market_subset": 15446,
+        "acc": 0.4975605822345873,
+        "top2": 0.7704528043224064,
+        "gain_vs_research": {
+          "n": 24801,
+          "weeks": 105,
+          "diff": 0.00868780817836523,
+          "lo": 0.007034476378109993,
+          "hi": 0.010280287026325234
+        }
+      },
+      "sel_xgb_mkt": {
+        "n": 24801,
+        "ll_all": 1.0026265382766724,
+        "ll_market_subset": 0.997465193271637,
+        "n_market_subset": 15446,
+        "acc": 0.4995766299745978,
+        "top2": 0.7742429740736261,
+        "gain_vs_research": {
+          "n": 24801,
+          "weeks": 105,
+          "diff": 0.013133405707776546,
+          "lo": 0.011032382390272983,
+          "hi": 0.015044009695279078
+        }
+      },
+      "sel_xgb_mkt_refit": {
+        "n": 24801,
+        "ll_all": 1.002942442893982,
+        "ll_market_subset": 0.9977618455886841,
+        "n_market_subset": 15446,
+        "acc": 0.49808475464699004,
+        "top2": 0.7746461836216282,
+        "gain_vs_research": {
+          "n": 24801,
+          "weeks": 105,
+          "diff": 0.012817584909498692,
+          "lo": 0.010683117557244841,
+          "hi": 0.014726741039320592
+        }
+      },
+      "sel_lgbm_mkt": {
+        "n": 24801,
+        "ll_all": 1.0024646473865353,
+        "ll_market_subset": 0.9971065619611928,
+        "n_market_subset": 15446,
+        "acc": 0.5010281843474054,
+        "top2": 0.7728720616104189,
+        "gain_vs_research": {
+          "n": 24801,
+          "weeks": 105,
+          "diff": 0.013295312485373228,
+          "lo": 0.011137097060263033,
+          "hi": 0.01525374376095349
+        }
+      },
+      "sel_ens_mkt": {
+        "n": 24801,
+        "ll_all": 1.0024263934475086,
+        "ll_market_subset": 0.9971526672903767,
+        "n_market_subset": 15446,
+        "acc": 0.5006652957542035,
+        "top2": 0.7738800854804242,
+        "gain_vs_research": {
+          "n": 24801,
+          "weeks": 105,
+          "diff": 0.01333356642440015,
+          "lo": 0.011217788146620814,
+          "hi": 0.015265952573247005
+        }
+      }
+    },
+    "test": {
+      "sel_ens_mkt": {
+        "n": 33101,
+        "ll_all": 1.0113526353202553,
+        "ll_market_subset": 1.0055237530085126,
+        "n_market_subset": 20388,
+        "acc": 0.49898794598350504,
+        "top2": 0.770913265460258,
+        "gain_vs_research": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.012534819792244788,
+          "lo": 0.011013294172269438,
+          "hi": 0.014022580706883158
+        },
+        "gain_vs_untuned_mkt": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.004202159220101803,
+          "lo": 0.0031890127989395345,
+          "hi": 0.005220927619592934
+        }
+      },
+      "sel_xgb_mkt": {
+        "n": 33101,
+        "ll_all": 1.0115145444869995,
+        "ll_market_subset": 1.005630612373352,
+        "n_market_subset": 20388,
+        "acc": 0.49889731428053535,
+        "top2": 0.7706715809190055,
+        "gain_vs_research": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.012372837401926517,
+          "lo": 0.010846893460116582,
+          "hi": 0.01388644033295829
+        },
+        "gain_vs_untuned_mkt": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.004040176048874855,
+          "lo": 0.0030303229713698004,
+          "hi": 0.005043116641205427
+        }
+      },
+      "sel_xgb_mkt_refit": {
+        "n": 33101,
+        "ll_all": 1.0115712881088257,
+        "ll_market_subset": 1.0056064128875732,
+        "n_market_subset": 20388,
+        "acc": 0.49938068336304037,
+        "top2": 0.7714268451104196,
+        "gain_vs_research": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.012316259555518627,
+          "lo": 0.010769738129346899,
+          "hi": 0.01388570354314671
+        },
+        "gain_vs_untuned_mkt": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.003983598668128252,
+          "lo": 0.0029262839946377172,
+          "hi": 0.005050622244786238
+        }
+      },
+      "sel_lgbm_mkt": {
+        "n": 33101,
+        "ll_all": 1.0113501842144577,
+        "ll_market_subset": 1.0055748676557383,
+        "n_market_subset": 20388,
+        "acc": 0.49913899882178786,
+        "top2": 0.7707017914866621,
+        "gain_vs_research": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.012537270898042343,
+          "lo": 0.010990907355821557,
+          "hi": 0.014039594636767105
+        },
+        "gain_vs_untuned_mkt": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.004204610325899359,
+          "lo": 0.003178415632391551,
+          "hi": 0.005235780551624676
+        }
+      },
+      "mkt_d_avgclose_a50": {
+        "n": 33101,
+        "ll_all": 1.0155547857284546,
+        "ll_market_subset": 1.0096224546432495,
+        "n_market_subset": 20388,
+        "acc": 0.49442615026736353,
+        "top2": 0.7685568411830458,
+        "gain_vs_research": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.008332660421729088,
+          "lo": 0.007155604742717904,
+          "hi": 0.009507927126982988
+        },
+        "gain_vs_untuned_mkt": {
+          "n": 33101,
+          "weeks": 144,
+          "diff": 0.0,
+          "lo": 0.0,
+          "hi": 0.0
+        }
+      }
+    },
+    "chosen": "sel_ens_mkt"
+  },
+  "compare_sel_ens_mkt": {
+    "recipe": {
+      "name": "sel_ens_mkt",
+      "engine": "ensemble",
+      "members": [
+        {
+          "name": "sel_xgb_mkt",
+          "engine": "xgb",
+          "target": "soft",
+          "teacher": "avg_close",
+          "alpha": 0.8672219847560312,
+          "half_life": 2000.0,
+          "lookback_days": 1460,
+          "cal_days": 90,
+          "calib": "temperature",
+          "features": "mkt",
+          "params": {
+            "n_estimators": 227,
+            "max_depth": 7,
+            "learning_rate": 0.049379365483754586,
+            "min_child_weight": 42.6552964472082,
+            "reg_lambda": 0.40221544980586527,
+            "reg_alpha": 0.0024147568325744023,
+            "gamma": 0.21873289188420275,
+            "subsample": 0.819792913222377,
+            "colsample_bytree": 0.89471569761902
+          }
+        },
+        {
+          "name": "sel_lgbm_mkt",
+          "engine": "lgbm",
+          "target": "soft",
+          "teacher": "avg_close",
+          "alpha": 0.8669527205055292,
+          "half_life": 500.0,
+          "lookback_days": 1460,
+          "cal_days": 90,
+          "calib": "temperature",
+          "features": "mkt",
+          "params": {
+            "n_estimators": 863,
+            "num_leaves": 15,
+            "max_depth": 7,
+            "learning_rate": 0.022788554496473296,
+            "min_child_samples": 44,
+            "reg_lambda": 0.021261656335250855,
+            "reg_alpha": 0.512211433427073,
+            "subsample": 0.9150168142712293,
+            "colsample_bytree": 0.8920533237252427,
+            "subsample_freq": 1
+          }
+        }
+      ],
+      "cal_days": 90,
+      "calib": "temperature"
+    },
+    "data_max": "2026-09-28",
+    "per_league": {
+      "n": 3998,
+      "weeks": 28,
+      "ll_prod": 1.0460932774523442,
+      "ll_v2": 1.0157030978560933,
+      "gain": 0.030390179596250923,
+      "ci": [
+        0.023412827768494,
+        0.036956218461848135
+      ],
+      "n_market": 2120,
+      "ll_market": 1.006050685755884,
+      "v2_vs_market": [
+        -0.001681824430467151,
+        -0.007060790511510929,
+        0.003747527853512372
+      ],
+      "prod_vs_market": [
+        -0.04048975518665927,
+        -0.051906146044245545,
+        -0.03069514590117312
+      ]
+    },
+    "full": {
+      "n": 1611,
+      "weeks": 7,
+      "ll_prod": 1.038189395273014,
+      "ll_v2": 1.0146470960585234,
+      "gain": 0.023542299214490338,
+      "ci": [
+        0.012415618807023856,
+        0.031049089468130307
+      ],
+      "n_market": 981,
+      "ll_market": 1.0037239742284427,
+      "v2_vs_market": [
+        -0.0022551460262260656,
+        -0.007818257167192116,
+        0.003276225466709447
+      ],
+      "prod_vs_market": [
+        -0.030897449782015144,
+        -0.04330817033701634,
+        -0.022837654342591863
+      ]
+    }
+  }
+}
