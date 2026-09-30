@@ -430,7 +430,8 @@ def check_models(quick: bool) -> None:
         tried += 1
         try:
             p = predict_mod.predict_match(teams[0], teams[1], team_stats, t2l,
-                                          hist, include_xg=False)
+                                          hist, include_xg=False,
+                                          model_mode='v1', with_v2=False)
             probs = p.get('1x2')
             if probs and abs(sum(probs.values()) - 1.0) < 0.02:
                 ok += 1
@@ -445,6 +446,52 @@ def check_models(quick: bool) -> None:
         record(WARN, 'every league has models',
                f'{len(untrained)} untrained: ' + ', '.join(untrained[:8])
                + '  — they appear in the app but return no prediction')
+
+
+def check_v2_serving(quick: bool) -> None:
+    """The v2 bundle loads and serves every league, and the model switch
+    routes the 1X2 as documented: auto = v2 for Turkey only, v1/v2 = that
+    version everywhere. A broken v2 must fail here, not silently fall back."""
+    from scripts import data_loader, utils, v2_bundle
+    from scripts import predict as predict_mod
+    t0 = time.time()
+    info = v2_bundle.serving_info()
+    if not info.get('ok'):
+        record(FAIL, 'v2 serves + model switch routes', info.get('error', ''))
+        return
+    hist = data_loader.load_processed_data()
+    team_stats = utils.get_team_stats_table(hist)
+    t2l = utils.get_team_to_league_map(hist)
+    last = hist.sort_values('Date').groupby('league').tail(1).set_index('league')
+    leagues = sorted(last.index)
+    if quick:
+        leagues = [lg for lg in ('turkish', 'german', 'british_pl') if lg in last.index]
+    served, missing = 0, []
+    for lg in leagues:
+        h, a = last.loc[lg, 'HomeTeam'], last.loc[lg, 'AwayTeam']
+        p = v2_bundle.predict_one(lg, h, a)
+        if p and abs(sum(p.values()) - 1) < 1e-6 and min(p.values()) > 0:
+            served += 1
+        else:
+            missing.append(lg)
+    expected = {('auto', 'turkish'): 'v2', ('auto', 'german'): 'v1',
+                ('v1', 'turkish'): 'v1', ('v1', 'german'): 'v1',
+                ('v2', 'turkish'): 'v2', ('v2', 'german'): 'v2'}
+    bad = {}
+    for (mode, lg), want in expected.items():
+        if lg not in last.index:
+            continue
+        h, a = last.loc[lg, 'HomeTeam'], last.loc[lg, 'AwayTeam']
+        got = predict_mod.predict_match(h, a, team_stats, t2l, hist,
+                                        include_xg=False, model_mode=mode)
+        if got.get('model_version') != want or '1x2_v1' not in got or '1x2_v2' not in got:
+            bad[f'{mode}/{lg}'] = got.get('model_version')
+    record(PASS if not missing and not bad else FAIL,
+           'v2 serves + model switch routes',
+           f"{served}/{len(leagues)} leagues in {time.time()-t0:.0f}s, "
+           f"bundle {info['tag']}"
+           + (f' — no v2 for: {missing}' if missing else '')
+           + (f' — misrouted: {bad}' if bad else ''))
 
 
 # ---------------------------------------------------------- 6. internationals
@@ -529,6 +576,7 @@ def main() -> int:
     check_ticket_grading()
     check_tracker()
     check_models(args.quick)
+    check_v2_serving(args.quick)
     check_international()
     if not args.quick:
         check_app()

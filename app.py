@@ -360,9 +360,103 @@ def stale_note(lg):
 
 
 # ----------------------------------------------------------------------------
-# Sidebar — data freshness + one-click refresh from the internet
+# Model version: v1 (production tier1) / v2 (frozen bundle) / auto
+# ----------------------------------------------------------------------------
+MODE_LABELS = {'auto': 'Auto', 'v1': 'v1', 'v2': 'v2'}
+MODE_HELP = {
+    'auto': "**Auto** — v2 for 🇹🇷 Süper Lig (v1's Turkish model fails on "
+            "unseen matches), v1 everywhere else.",
+    'v1': "**v1** — the production models everywhere.",
+    'v2': "**v2** — the new model everywhere (1X2 only; see V2_RESULTS.md).",
+}
+if 'model_mode' not in st.session_state:
+    _q = st.query_params.get('model', 'auto')
+    st.session_state.model_mode = _q if _q in predict_mod.MODEL_MODES else 'auto'
+predict_mod.set_model_mode(st.session_state.model_mode)
+
+
+def model_mode():
+    return st.session_state.model_mode
+
+
+def served(league, v1, v2, mkt=None):
+    """(probs [home, draw, away], label) actually used for one fixture:
+    the market when there are odds, else v2 or v1 per the current mode."""
+    if mkt is not None:
+        return mkt, 'odds'
+    if v2 is not None and predict_mod.serves_v2(league, model_mode()):
+        return v2, 'v2'
+    return v1, 'v1'
+
+
+def pct3(p):
+    """[home, draw, away] -> '45 · 28 · 27' (percent), or '—'."""
+    return '—' if p is None else ' · '.join(f"{x * 100:.0f}" for x in p)
+
+
+def _hda(d):
+    return None if not d else (d['home'], d['draw'], d['away'])
+
+
+def prob_bars(rows):
+    """Stacked 1 / X / 2 bars, one per (label, probs, highlight) — a quick
+    visual of where the models and the market disagree."""
+    colors = ('#3b6fb6', '#8f8f8f', '#e07b39')         # home · draw · away
+    html = []
+    for label, p, hot in rows:
+        if p is None:
+            continue
+        segs = ''.join(
+            f"<div style='width:{x * 100:.1f}%;background:{c};color:#fff;"
+            f"text-align:center;font-size:12px;line-height:22px;"
+            f"overflow:hidden;white-space:nowrap'>{x * 100:.0f}%</div>"
+            for x, c in zip(p, colors))
+        weight = '700' if hot else '400'
+        html.append(
+            f"<div style='display:flex;align-items:center;gap:10px;margin:3px 0'>"
+            f"<div style='width:92px;font-size:13px;font-weight:{weight}'>{label}</div>"
+            f"<div style='flex:1;display:flex;border-radius:5px;overflow:hidden;"
+            f"height:22px'>{segs}</div></div>")
+    legend = ("<div style='font-size:11px;opacity:.7;margin-top:2px'>"
+              "<span style='color:#3b6fb6'>■</span> home &nbsp; "
+              "<span style='color:#8f8f8f'>■</span> draw &nbsp; "
+              "<span style='color:#e07b39'>■</span> away</div>")
+    st.markdown(''.join(html) + legend, unsafe_allow_html=True)
+
+
+PCT_COL = {k: st.column_config.ProgressColumn(
+    k, min_value=0, max_value=100, format="%d%%", width='small')
+    for k in ('1', 'X', '2')}
+
+
+# ----------------------------------------------------------------------------
+# Sidebar — model switch, data freshness, one-click refresh
 # ----------------------------------------------------------------------------
 with st.sidebar:
+    st.markdown("### 🧠 Model")
+    _pick = st.segmented_control(
+        "Serve 1X2 from", predict_mod.MODEL_MODES, key='model_mode_w',
+        default=st.session_state.model_mode, format_func=MODE_LABELS.get,
+        label_visibility='collapsed')
+    if _pick and _pick != st.session_state.model_mode:
+        st.session_state.model_mode = _pick
+        st.query_params['model'] = _pick           # survives reloads/bookmarks
+        predict_mod.set_model_mode(_pick)
+    st.caption(MODE_HELP[model_mode()] + " With bookmaker odds the market is "
+               "used whichever you pick.")
+    st.toggle("Show v1 / v2 side by side", value=True, key='show_both')
+    try:
+        from scripts import v2_bundle as _v2b
+        _info = _v2b.serving_info()
+    except Exception as _e:                          # never break the app
+        _info = {'ok': False, 'error': str(_e)}
+    if _info.get('ok'):
+        st.caption(f"v2 bundle `{_info['tag']}` · trained through "
+                   f"{_info['trained_through']}")
+    else:
+        st.caption(f"⚠️ v2 unavailable ({_info.get('error', '?')}) — "
+                   "everything falls back to v1.")
+
     st.markdown("### 📡 Data")
     st.caption(f"Club results through **{hist['Date'].max().date()}**")
     try:
@@ -457,7 +551,8 @@ tab_toto, tab_fix, tab_match, tab_wc = st.tabs(
 # ============================================================================
 with tab_match:
     c1, c2, c3 = st.columns(3)
-    lg = c1.selectbox("League", leagues, format_func=disp)
+    lg = c1.selectbox("League", leagues, format_func=disp,
+                      index=leagues.index('turkish') if 'turkish' in leagues else 0)
     opts = teams_by_league.get(lg, [])
     home = c2.selectbox("Home team", opts, key="home")
     away = c3.selectbox("Away team", opts,
@@ -500,33 +595,50 @@ with tab_match:
                 "The league's models are missing or failed to load — see the "
                 "note above, or run `python scripts/selftest.py` to check.")
         if p:
-            # Stats-first table: probability, bookmaker odds, implied %, edge
             mkt = pred.get('market')
+            lg_key = pred.get('league') or lg
+            v1, v2 = _hda(pred.get('1x2_v1')), _hda(pred.get('1x2_v2'))
+            m_imp = _hda(mkt['implied']) if mkt else None
+            used, used_src = served(lg_key, v1, v2, m_imp)
+            model_p, model_src = served(lg_key, v1, v2)      # the model on its own
+            both = st.session_state.get('show_both', True)
             rows = []
-            for lbl, key in [(f"🏠 {home_p}", 'home'), ("🤝 Draw", 'draw'),
-                             (f"✈️ {away_p}", 'away')]:
-                r = {'Outcome': lbl, 'Model': f"{p[key]:.0%}",
-                     'Fair odds': f"{(1/p[key]):.2f}" if p[key] > 0 else '—'}
+            for i, (lbl, key) in enumerate([(f"🏠 {home_p}", 'home'), ("🤝 Draw", 'draw'),
+                                            (f"✈️ {away_p}", 'away')]):
+                r = {'Outcome': lbl, 'Used': f"{used[i]:.0%}",
+                     'Fair odds': f"{1 / used[i]:.2f}" if used[i] > 0 else '—'}
+                if both:
+                    for name, q in (('v1', v1), ('v2', v2)):
+                        head = name + (' ✓' if model_src == name else '')
+                        r[head] = f"{q[i]:.0%}" if q else '—'
+                else:
+                    r[f'Model ({model_src})'] = f"{model_p[i]:.0%}"
                 if mkt:
-                    imp = mkt['implied'][key]
                     r['Book odds'] = f"{mkt['odds'][key]:.2f}"
-                    r['Book %'] = f"{imp:.0%}"
-                    r['Model − Book'] = f"{p[key] - imp:+.0%}"
+                    r['Book %'] = f"{m_imp[i]:.0%}"
+                    r['Model − Book'] = f"{model_p[i] - m_imp[i]:+.0%}"
                 rows.append(r)
             st.dataframe(pd.DataFrame(rows), use_container_width=True,
                          hide_index=True)
+            if both:
+                prob_bars([('v1' + (' ✓' if model_src == 'v1' else ''), v1, not mkt and model_src == 'v1'),
+                           ('v2' + (' ✓' if model_src == 'v2' else ''), v2, not mkt and model_src == 'v2'),
+                           ('Market', m_imp, bool(mkt))])
+            if v2 is None and both:
+                st.caption("v2 has no prediction for this pair (a team it has "
+                           "never seen in this league) — v1 is used.")
             if mkt:
                 st.caption(
-                    "**Model − Book** is disagreement, *not* value. Measured on "
-                    "684 matches out-of-sample (Jun–Aug 2026): the bookmaker "
-                    "scored 1.003 log-loss, this model 1.033, and fitting the "
-                    "blend gives the model **zero** weight — so where odds "
-                    "exist the shown probabilities are essentially the market's. "
-                    "The model earns its keep on matches with no odds, and in "
-                    "Toto, where you are playing the crowd rather than the book.")
+                    "**Used** is the market: odds were found, and they beat both "
+                    "models. **✓** marks the model the switch selects. "
+                    "**Model − Book** is disagreement, *not* value: on unseen "
+                    "matches v1 trailed the market by ~0.03–0.04 log-loss and v2 "
+                    "by ~0.002–0.005, and blending either into the odds does not "
+                    "reliably help. The models earn their keep on matches with "
+                    "no odds, and in Toto, where you play the crowd.")
             else:
-                st.caption("No live odds for this fixture in the feed — "
-                           "showing model probabilities only.")
+                st.caption(f"No live odds for this fixture in the feed — **Used** "
+                           f"is model **{model_src}** (✓).")
 
         cols = st.columns(3)
         if 'ou25' in pred:
@@ -564,7 +676,8 @@ with tab_fix:
     if st.button("Load fixtures", type="primary"):
         from scripts import today as today_mod
         with st.spinner("Fetching odds feed and predicting…"):
-            st.session_state.fix_rows = today_mod.club_section(days)
+            st.session_state.fix_rows = today_mod.club_section(
+                days, hist, team_stats, team_to_league)
 
     frows = st.session_state.get('fix_rows')
     if frows is not None:
@@ -580,18 +693,47 @@ with tab_fix:
             shown = [r for r in frows
                      if not pick_lgs or r['League'] in pick_lgs]
 
-            df = pd.DataFrame(shown)
-            for c in ['P(1)', 'P(X)', 'P(2)', 'Conf', 'P(O2.5)', 'P(BTTS)',
-                      'Edge']:
-                if c in df.columns:
-                    df[c] = (df[c] * 100).round(0)
-            st.caption(f"Showing **{len(shown)}** of {len(frows)} fixtures.")
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            both = st.session_state.get('show_both', True)
+            table = []
+            for r in shown:
+                if '_v1' in r:
+                    v1, v2, mk, lgk = r['_v1'], r['_v2'], r['_mkt'], r['_league']
+                else:                        # rows loaded before this version
+                    v1, v2, mk, lgk = (r['P(1)'], r['P(X)'], r['P(2)']), None, None, None
+                used, src = served(lgk, v1, v2, mk)
+                model_p, _ = served(lgk, v1, v2)
+                row = {'Date': r['Date'], 'League': r['League'],
+                       'Home': r['Home'], 'Away': r['Away'],
+                       '1': round(used[0] * 100), 'X': round(used[1] * 100),
+                       '2': round(used[2] * 100),
+                       'Pick': '1X2'[int(np.argmax(used))], 'Used': src}
+                if both:
+                    row['v1'], row['v2'] = pct3(v1), pct3(v2)
+                row['Odds'] = r.get('Odds(1/X/2)', '—')
+                if r.get('P(O2.5)') is not None:
+                    row['O2.5'] = round(r['P(O2.5)'] * 100)
+                if r.get('P(BTTS)') is not None:
+                    row['BTTS'] = round(r['P(BTTS)'] * 100)
+                if mk is not None and model_p is not None:
+                    k = int(np.argmax(model_p))
+                    row['Edge'] = round((model_p[k] - mk[k]) * 100)
+                table.append(row)
+            df = pd.DataFrame(table)
+            st.caption(f"Showing **{len(shown)}** of {len(frows)} fixtures · "
+                       f"model: **{MODE_LABELS[model_mode()]}**.")
+            st.dataframe(df, use_container_width=True, hide_index=True,
+                         column_config={
+                             **PCT_COL,
+                             'O2.5': st.column_config.NumberColumn(format="%d%%"),
+                             'BTTS': st.column_config.NumberColumn(format="%d%%"),
+                             'Edge': st.column_config.NumberColumn(format="%+d pts"),
+                         })
             st.caption(
-                "Anchored = 1X2 blended with live odds (where odds exist the "
-                "market dominates — the model is fitted to zero weight against "
-                "it). **Edge** is the model−market gap on the model's pick: "
-                "read it as disagreement to investigate, not as a value bet.")
+                "**1 · X · 2** are the probabilities used. **Used**: *odds* = live "
+                "bookmaker odds (they beat both models), *v1/v2* = the model the "
+                "sidebar switch selects. **v1 / v2** show both models as "
+                "home · draw · away %. **Edge** = selected model minus market on "
+                "the model's pick — disagreement to look into, not a value bet.")
             st.download_button("Download CSV", df.to_csv(index=False),
                                "fixtures.csv")
 
@@ -699,7 +841,8 @@ with tab_toto:
     budget = cset[1].number_input("System budget (columns)", 1, 100000, 1,
                                   help="1 = single column. Higher = cover "
                                        "toss-ups with doubles/triples.")
-    cset[2].metric("Coupon", f"{n_exp} matches · prize {threshold}+")
+    cset[2].markdown(f"**Coupon**  \n{n_exp} matches · prize at **{threshold}+** "
+                     f"correct")
 
     key = f'coupon_{game}'
     if key not in st.session_state:
@@ -817,13 +960,23 @@ with tab_toto:
                     if np.argmax(model) != np.argmax(
                             toto._devig(r['o1'], r['ox'], r['o2'])):
                         flag = '⚠ contrarian'
+                # say where the numbers came from, in plain words
+                det = ctx.get('model_detail', {}).get((str(r['home']), str(r['away'])))
+                shown_src = src
+                if src in ('blend', 'odds'):
+                    shown_src = 'odds'
+                elif src == 'model' and det:
+                    shown_src = 'feed odds' if det['feed_odds'] else det['version']
                 out.append({'Match': f"{r['home']} v {r['away']}",
                             '1': round(p[0] * 100), 'X': round(p[1] * 100),
                             '2': round(p[2] * 100),
                             'Pick': toto.OUTCOMES[order[0]],
                             'Fair': round(1 / p[order[0]], 2)
                             if p[order[0]] > 0 else None,
-                            'Src': src, 'Note': flag})
+                            'Src': shown_src,
+                            'v1': pct3(_hda(det['v1'])) if det else '—',
+                            'v2': pct3(_hda(det['v2'])) if det else '—',
+                            'Note': flag})
                 sorted_probs.append(np.sort(p)[::-1])
                 picks.append({'home': str(r['home']), 'away': str(r['away']),
                               'p1': float(p[0]), 'px': float(p[1]),
@@ -831,7 +984,7 @@ with tab_toto:
                               'pick': toto.OUTCOMES[order[0]], 'src': src})
             st.session_state[f'toto_res_{game}'] = {
                 'text': text, 'out': out, 'sorted_probs': sorted_probs,
-                'unmatched': unmatched, 'picks': picks}
+                'unmatched': unmatched, 'picks': picks, 'mode': model_mode()}
 
     # --- results persist across reruns; system section follows the budget ----
     res = st.session_state.get(f'toto_res_{game}')
@@ -839,15 +992,25 @@ with tab_toto:
         if res['text'].strip() != text.strip():
             st.info("✏️ The coupon changed since this analysis — hit "
                     "**Analyze coupon** to refresh.")
+        elif res.get('mode', 'auto') != model_mode():
+            st.info(f"🧠 The model switch changed to **{MODE_LABELS[model_mode()]}** "
+                    "since this analysis — hit **Analyze coupon** to re-price "
+                    "the rows priced by a model.")
         out, sorted_probs = res['out'], res['sorted_probs']
 
-        st.dataframe(pd.DataFrame(out), use_container_width=True,
-                     hide_index=True)
+        _odf = pd.DataFrame(out)
+        if not st.session_state.get('show_both', True):
+            _odf = _odf.drop(columns=['v1', 'v2'], errors='ignore')
+        st.dataframe(_odf, use_container_width=True, hide_index=True,
+                     column_config=PCT_COL)
         st.caption("Fair = fair decimal odds for the pick (1 ÷ probability) "
-                   "— bet it only if a book pays more. Src: **blend** "
-                   "(odds+model) · **odds** · **model** (club, same league) · "
-                   "**euro** (cross-league clubs — UCL/UEL, via global club "
-                   "Elo) · **intl** (national teams) · **no data** (1∕3 each).")
+                   "— bet it only if a book pays more. **Src** (where 1 · X · 2 "
+                   "came from): **odds** (typed on the coupon) · **feed odds** "
+                   "(found in the live bookmaker feed) · **v1 / v2** (club model, "
+                   "per the sidebar switch) · **euro** (cross-league clubs via "
+                   "global club Elo) · **intl** (national teams) · **no data** "
+                   "(1∕3 each). **v1 / v2** show both club models as "
+                   "home · draw · away %.")
         if res['unmatched']:
             st.warning("Couldn't match — defaulted to 1/3 each. Check the "
                        "spelling, or add odds (`… 2.10 3.30 3.40`):\n\n- "
@@ -958,7 +1121,8 @@ with tab_toto:
                     'cols': ticket_mod.popcount(tk['masks'][i]),
                     '1': out[i]['1'], 'X': out[i]['X'], '2': out[i]['2'],
                 } for i in range(len(out))])
-                st.dataframe(tdf, use_container_width=True, hide_index=True)
+                st.dataframe(tdf, use_container_width=True, hide_index=True,
+                             column_config=PCT_COL)
                 mk1, mk2, mk3 = st.columns(3)
                 mk1.metric("Columns used", f"{tk['columns']} / {int(budget)}")
                 mk2.metric(f"P(≥{threshold})", f"{tk['p_hit']:.2%}")

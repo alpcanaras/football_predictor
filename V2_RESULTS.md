@@ -1,9 +1,28 @@
 # V2 models — results (2026-09-30)
 
-**Status: shadow only.** The app still serves `models/tier1/`. Production is
-untouched: all 627 production model files match
+**Status (2026-09-30): v2 serves the Turkish 1X2; everything else is still
+v1 by default.** The app has a model switch in its sidebar:
+
+| mode | 1X2 served from |
+|---|---|
+| **Auto** (default) | v2 for the Turkish Süper Lig, v1 everywhere else |
+| **v1** | the production models (`models/tier1/`) everywhere |
+| **v2** | the frozen v2 bundle everywhere |
+
+With bookmaker odds, every mode uses the market. The Match, Fixtures and
+Toto tabs show v1 and v2 side by side. Only the 1X2 has a v2 model:
+over/under, BTTS and the other markets stay v1.
+
+Why Turkey went first: the Turkish v1 models are overfit. They score 0.67
+log-loss on a season they trained on, but 1.19–1.25 on the unseen 2026/27
+matches, which is worse than 1/3-1/3-1/3. On those same matches the market
+scored 1.02 and v2 1.03. Serving v2 there early was the owner's call.
+
+Production v1 is untouched: all 627 v1 model files match
 `models/_backup/prod_checksums_2026-09-29.txt`, and git tag `prod-2026-09-29`
 is the durable copy. The frozen v2 bundle is `models/v2/2026-09-30_sel_ens_mkt3/`.
+`scripts/selftest.py` checks that v2 serves every league and that the switch
+routes as documented.
 
 ## What v2 is
 
@@ -108,11 +127,13 @@ python -m scripts.v2_bundle status
 The log is `reports/v2/shadow/shadow_log.csv`. It keeps the latest pre-match
 prediction per fixture, and only fixtures from today onward are logged.
 
-## Promotion checklist (not done — owner's call)
+## Promotion checklist (the rest of the leagues — owner's call)
 
-1. 3–4 league weekends of shadow logging. `grade` shows v2 vs production
-   with a CI above zero.
-2. Wire v2 into `predict.py` / `toto._model_probs` behind a flag, with
-   tier1 as the fallback for fixtures v2 cannot featurize.
+1. 3–4 league weekends of shadow logging. `grade` shows v2 vs v1 with a CI
+   above zero.
+2. ~~Wire v2 into `predict.py` / `toto._model_probs` behind a flag, with v1
+   as the fallback~~ — done: `predict.MODEL_MODES` and the sidebar switch.
+   Promoting everywhere means making `v2` the default mode, or growing
+   `predict.V2_AUTO_LEAGUES`.
 3. Keep the market-first policy for priced fixtures (`blend_weights.json`).
 4. Re-run `scripts/selftest.py`, then tag the new production state.

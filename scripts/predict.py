@@ -54,11 +54,54 @@ def _ensemble_predict(models, X):
 
 
 # =============================================================================
+# MODEL VERSION  (v1 = models/tier1 ensembles; v2 = the frozen bundle in
+# models/v2, see V2_RESULTS.md). Only the 1X2 market has a v2 model.
+# =============================================================================
+MODEL_MODES = ('auto', 'v1', 'v2')
+# 'auto' serves v2 where v1 is known to be broken out of sample: the Turkish
+# per-league models are overfit (0.67 log-loss on a season they trained on,
+# 1.25 on the unseen 2026/27 matches — worse than 1/3-1/3-1/3), while v2
+# scored 1.03 on those same matches.
+V2_AUTO_LEAGUES = {'turkish'}
+_MODEL_MODE = os.environ.get('FOOTBALL_PREDICTOR_MODEL', 'auto')
+
+
+def set_model_mode(mode: str) -> None:
+    global _MODEL_MODE
+    if mode not in MODEL_MODES:
+        raise ValueError(f'model mode must be one of {MODEL_MODES}')
+    _MODEL_MODE = mode
+
+
+def get_model_mode() -> str:
+    return _MODEL_MODE
+
+
+def serves_v2(league: str, mode: str | None = None) -> bool:
+    mode = mode or _MODEL_MODE
+    return mode == 'v2' or (mode == 'auto' and league in V2_AUTO_LEAGUES)
+
+
+def v2_1x2(home_team, away_team, league, prediction_date=None) -> dict | None:
+    """The v2 1X2 {'home','draw','away'}, or None if v2 cannot serve it."""
+    try:
+        from scripts import v2_bundle
+        return v2_bundle.predict_one(league, home_team, away_team, prediction_date)
+    except Exception:
+        return None
+
+
+# =============================================================================
 # CORE PREDICTION
 # =============================================================================
 def predict_match(home_team, away_team, team_stats, team_to_league,
                   historical_data, include_xg=True, model_set='current',
-                  prediction_date=None, **_kwargs):
+                  prediction_date=None, model_mode=None, with_v2=True,
+                  **_kwargs):
+    """All markets for one fixture. The 1X2 comes from v1 or v2 according to
+    `model_mode` (default: the process-wide mode, 'auto'); both versions are
+    kept as '1x2_v1' / '1x2_v2' for side-by-side display, and
+    'model_version' says which one '1x2' holds before the market anchor."""
     if home_team not in team_stats.index:
         raise ValueError(f"Unknown team: {home_team}")
     if away_team not in team_stats.index:
@@ -87,6 +130,17 @@ def predict_match(home_team, away_team, team_stats, team_to_league,
         'league': league,
     }
     predictions.update(_predict_all_markets(feat, league, include_xg, model_set))
+    predictions['model_version'] = 'v1'
+    if '1x2' in predictions:
+        predictions['1x2_v1'] = dict(predictions['1x2'])
+    want_v2 = model_set == 'current' and serves_v2(league, model_mode)
+    if with_v2 or want_v2:
+        v2 = v2_1x2(home_team, away_team, league, prediction_date)
+        if v2 is not None:
+            predictions['1x2_v2'] = v2
+            if want_v2:
+                predictions['1x2'] = dict(v2)
+                predictions['model_version'] = 'v2'
     _market_anchor(predictions, league, home_team, away_team)
     return predictions
 

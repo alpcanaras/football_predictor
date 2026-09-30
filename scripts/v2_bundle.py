@@ -309,7 +309,8 @@ def _production_1x2(fx: pd.DataFrame) -> pd.DataFrame:
             p = predict_mod.predict_match(r['HomeTeam'], r['AwayTeam'], team_stats,
                                           team_to_league, hist, include_xg=False,
                                           prediction_date=r['Date'])
-            q = p.get('1x2_model', p.get('1x2'))
+            # v1 exactly as it was served before v2 existed (pre-anchor)
+            q = p.get('1x2_v1') or p.get('1x2_model', p.get('1x2'))
             out.append((q['away'], q['draw'], q['home']))
         except Exception:
             out.append((np.nan, np.nan, np.nan))

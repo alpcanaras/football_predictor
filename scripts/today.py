@@ -38,7 +38,14 @@ def _pick(p: dict) -> tuple[str, float]:
     return max(options, key=lambda x: x[1])
 
 
-def club_section(days: int) -> list[dict]:
+def _hda(p: dict | None):
+    return None if not p else (p['home'], p['draw'], p['away'])
+
+
+def club_section(days: int, hist=None, team_stats=None,
+                 team_to_league=None) -> list[dict]:
+    """Predict every club fixture in the feed for the next `days` days.
+    Pass already-loaded data (the app does) to skip reloading it."""
     fixtures_mod.fetch()
     fx = fixtures_mod.load(fetch_if_missing=False)
 
@@ -52,10 +59,11 @@ def club_section(days: int) -> list[dict]:
         return []
     fx = fx.sort_values(['Date', 'league'])
 
-    print("Loading club data + models (this takes a moment)...")
-    hist = data_loader.load_processed_data()
-    team_stats = utils.get_team_stats_table(hist)
-    team_to_league = utils.get_team_to_league_map(hist)
+    if hist is None or team_stats is None or team_to_league is None:
+        print("Loading club data + models (this takes a moment)...")
+        hist = data_loader.load_processed_data()
+        team_stats = utils.get_team_stats_table(hist)
+        team_to_league = utils.get_team_to_league_map(hist)
 
     rows = []
     for _, m in fx.iterrows():
@@ -79,6 +87,13 @@ def club_section(days: int) -> list[dict]:
             'P(1)': p['home'], 'P(X)': p['draw'], 'P(2)': p['away'],
             'Pick': pick, 'Conf': prob,
             'Anchored': 'market' in pred,
+            'Model': 'market' if 'market' in pred else pred.get('model_version', 'v1'),
+            # both model versions + the market, [home, draw, away], so a UI can
+            # switch or compare without predicting again ('_' = not for print)
+            '_league': league,
+            '_v1': _hda(pred.get('1x2_v1')),
+            '_v2': _hda(pred.get('1x2_v2')),
+            '_mkt': _hda((pred.get('market') or {}).get('implied')),
         }
         # relevant odds, shown alongside the model's view
         if 'market' in pred:
