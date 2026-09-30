@@ -42,6 +42,13 @@ def _hda(p: dict | None):
     return None if not p else (p['home'], p['draw'], p['away'])
 
 
+def _goals(g: dict | None):
+    """{'ou25': P(over 2.5), 'btts': P(yes)} from a goals_v1/_v2 block."""
+    if not g:
+        return None
+    return {'ou25': (g.get('ou25') or {}).get('over'), 'btts': (g.get('btts') or {}).get('yes')}
+
+
 def club_section(days: int, hist=None, team_stats=None,
                  team_to_league=None) -> list[dict]:
     """Predict every club fixture in the feed for the next `days` days.
@@ -94,6 +101,8 @@ def club_section(days: int, hist=None, team_stats=None,
             '_v1': _hda(pred.get('1x2_v1')),
             '_v2': _hda(pred.get('1x2_v2')),
             '_mkt': _hda((pred.get('market') or {}).get('implied')),
+            '_g1': _goals(pred.get('goals_v1')),
+            '_g2': _goals(pred.get('goals_v2')),
         }
         # relevant odds, shown alongside the model's view
         if 'market' in pred:

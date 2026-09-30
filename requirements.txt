@@ -15,6 +15,8 @@ requests
 jupyterlab
 tqdm
 streamlit>=1.30
+starlette>=0.37
+uvicorn>=0.29
 
 # Saved models are pickles, so the library that wrote them has to be able to
 # read them back. The models currently in models/tier1/ were trained with:

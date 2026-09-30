@@ -27,21 +27,47 @@ Predictor_latest.ipynb        Interactive prediction + analytics notebook
 
 ## Everyday use
 
-**Easiest: double-click `run.command`** (macOS) — it sets up the environment
-on first run and opens the app in your browser. Nothing else to install.
-
-Or from a terminal:
+**Easiest: double-click `run.command`** (macOS). It sets up the environment on
+first run and opens the app in your browser at http://127.0.0.1:8765. Nothing
+else to install. From a terminal it is the same thing:
 
 ```bash
-pip install streamlit      # one-time
-streamlit run app.py       # opens in your browser
+./venv/bin/python -m webapp        # --port 9000 --no-browser also work
 ```
 
-Four tabs, Toto first because that is the weekly job: build a **coupon**;
-browse **fixtures** anchored to live odds; get a full prediction card for a
-single **match**; or see upcoming **internationals**. Replaces the notebook for
-everyday use. The sidebar shows data freshness, flags stale leagues, and
-refreshes everything from the internet in one click without a restart.
+The app is a small local web server (`webapp/`: a Starlette JSON API over the
+same Python modules, plus a no-build JavaScript front end). Pages update in
+place, so nothing re-runs or loses what you are typing.
+
+- **🎟️ Toto — a live coupon editor.**
+  - Type teams with autocomplete (accent-insensitive, clubs and national
+    teams), or paste a whole coupon.
+  - Every row prices itself when you finish typing. Its source is labelled:
+    odds · feed odds · v1 · v2 · euro · nations · no data.
+  - Unrecognised names get "did you mean" chips; duplicates are flagged.
+  - The ticket re-optimises by itself as you change the budget. It shows
+    P(prize), the tier ladder, columns, doubles/triples and expected correct.
+  - **Click 1 / X / 2 on any row to lock your own pick.** The rest of the
+    ticket is optimised around it (verified against brute force), and 🔒
+    unlocks it.
+  - Crowd % (paste all lines at once) enables the crowd-aware objective and
+    the hit-vs-payout trade-off.
+  - Other tools: 📡 fill odds from the live feed, "what does more budget
+    buy?", copy / print the ticket, save it to history.
+  - Everything autosaves to `data/_toto/<game>.txt`, the same files as
+    before, plus `<game>.meta.json` for crowd %, locks and budget.
+- **📅 Fixtures**: filter by day, league or team; v1 / v2 / market side by
+  side; one click adds a match to either coupon.
+- **🎯 Match**: any two teams, with v1, v2 and the market, goal markets and
+  fair odds.
+- **🌍 Internationals**: upcoming national-team games, and a pricer for any
+  two nations.
+- **📈 History**: saved tickets graded against the real results.
+- **Header**: the model switch (Auto / v1 / v2, remembered) and a data menu
+  with freshness, stale leagues and one-click updates with a live log.
+
+The classic Streamlit app is still there: double-click `run_classic.command`
+(or `streamlit run app.py`). Both apps read and write the same coupons.
 
 ### Toto coupon optimizer
 

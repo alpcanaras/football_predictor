@@ -1,6 +1,7 @@
 #!/bin/bash
-# Double-click this file to launch the Football Predictor app in your browser.
+# Double-click this file to launch the Football Predictor in your browser.
 # (macOS: first time, right-click → Open to get past Gatekeeper.)
+# The classic Streamlit version is still here: run_classic.command.
 cd "$(dirname "$0")" || exit 1
 
 if [ ! -d venv ]; then
@@ -10,8 +11,9 @@ if [ ! -d venv ]; then
   ./venv/bin/pip install -q -r requirements.txt
 fi
 
-# Make sure streamlit is present even if requirements changed
-./venv/bin/python -c "import streamlit" 2>/dev/null || ./venv/bin/pip install -q streamlit
+# The web app needs starlette + uvicorn (they come with the requirements)
+./venv/bin/python -c "import starlette, uvicorn" 2>/dev/null \
+  || ./venv/bin/pip install -q starlette uvicorn
 
 echo "Launching Football Predictor… (close this window to stop)"
-exec ./venv/bin/streamlit run app.py
+exec ./venv/bin/python -m webapp

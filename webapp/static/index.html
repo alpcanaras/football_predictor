@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Football Predictor</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">⚽ <span>Football Predictor</span></div>
+    <nav class="tabs" id="tabs">
+      <a href="#/toto" data-page="toto">🎟️ Toto</a>
+      <a href="#/fixtures" data-page="fixtures">📅 Fixtures</a>
+      <a href="#/match" data-page="match">🎯 Match</a>
+      <a href="#/internationals" data-page="internationals">🌍 Internationals</a>
+      <a href="#/history" data-page="history">📈 History</a>
+    </nav>
+    <div class="top-right">
+      <div class="seg" id="model-seg" role="radiogroup" aria-label="Model">
+        <button data-mode="auto" title="v2 for the Turkish Süper Lig, v1 everywhere else">Auto</button>
+        <button data-mode="v1" title="The production models everywhere">v1</button>
+        <button data-mode="v2" title="The new model everywhere (1X2 + goal markets)">v2</button>
+      </div>
+      <button class="pill" id="data-pill" aria-haspopup="dialog">Data…</button>
+    </div>
+  </header>
+
+  <div id="data-pop" class="popover" hidden></div>
+
+  <main id="app">
+    <div class="boot" id="boot">
+      <div class="spinner"></div>
+      <div id="boot-step">Starting…</div>
+      <div class="muted small">Loading match data and models — about 15 seconds the first time.</div>
+    </div>
+  </main>
+
+  <div id="toasts" aria-live="polite"></div>
+  <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>

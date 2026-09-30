@@ -136,16 +136,24 @@ def evaluate(masks, omega: np.ndarray, threshold: int,
 # OPTIMISER
 # =============================================================================
 def build(probs, threshold, budget, crowd=None, n_sims=20000, seed=0,
-          restarts=6, field=DEFAULT_FIELD, tilt=DEFAULT_TILT):
+          restarts=6, field=DEFAULT_FIELD, tilt=DEFAULT_TILT, fixed=None):
     """Choose the symbols for every match subject to columns <= budget.
 
     Seeded with the top-k-by-probability ticket (optimal for the hit
     objective), then hill-climbed over single-match and pairwise symbol
     changes — which matters for the payout objective, where the best pair is
     not always the two most likely outcomes.
+
+    `fixed` maps match index -> mask for symbols the player has locked by
+    hand; those matches are never changed and the rest are optimised around
+    them within what is left of the budget. If the locks alone cost more than
+    the budget, the free matches stay single and `over_budget` is set.
     """
     probs = [np.asarray(p, float) / np.asarray(p, float).sum() for p in probs]
     n = len(probs)
+    fixed = {int(i): int(m) for i, m in (fixed or {}).items()
+             if int(m) in MASK_LABEL and 0 <= int(i) < n}
+    free = [i for i in range(n) if i not in fixed]
     share = omega = None
     if crowd is not None:
         # payout needs the joint distribution of results, so simulate
@@ -179,11 +187,11 @@ def build(probs, threshold, budget, crowd=None, n_sims=20000, seed=0,
         return evaluate(masks, omega, threshold, share)[1]
 
     # greedy seed: spend the budget on the least predictable matches
-    seed_masks = [topk_mask(i, 1) for i in range(n)]
-    cols = 1
+    seed_masks = [fixed.get(i, topk_mask(i, 1)) for i in range(n)]
+    cols = columns(seed_masks)
     while True:
         best = None
-        for i in range(n):
+        for i in free:
             k = popcount(seed_masks[i])
             if k >= 3:
                 continue
@@ -203,12 +211,15 @@ def build(probs, threshold, budget, crowd=None, n_sims=20000, seed=0,
     best_masks, best_score = list(seed_masks), score(seed_masks)
     rng = np.random.default_rng(seed)
     for attempt in range(max(1, restarts)):
-        cur = list(seed_masks) if attempt == 0 else _random_start(n, budget, rng)
+        if attempt == 0:
+            cur = list(seed_masks)
+        else:
+            cur = _random_start(n, budget, rng, fixed)
         cur_s = score(cur)
         improved = True
         while improved:
             improved = False
-            for i in range(n):                        # single-match moves
+            for i in free:                            # single-match moves
                 keep, best_local = cur[i], cur_s
                 for m in ALL_MASKS:
                     if m == keep:
@@ -221,8 +232,8 @@ def build(probs, threshold, budget, crowd=None, n_sims=20000, seed=0,
                     cur[i] = keep
                 cur[i] = keep
                 cur_s = max(cur_s, best_local)
-            for i in range(n):                        # pairwise moves
-                for j in range(i + 1, n):
+            for a_, i in enumerate(free):              # pairwise moves
+                for j in free[a_ + 1:]:
                     ki, kj, best_local = cur[i], cur[j], cur_s
                     bi, bj = ki, kj
                     for mi in ALL_MASKS:
@@ -251,6 +262,7 @@ def build(probs, threshold, budget, crowd=None, n_sims=20000, seed=0,
         'p_hit': p_hit,
         'ev': ev,
         'objective': 'payout' if share is not None else 'hit',
+        'over_budget': columns(best_masks) > budget,
     }
 
 
@@ -281,10 +293,16 @@ def sweep(probs, threshold, budget, crowd, field=DEFAULT_FIELD,
     return rows
 
 
-def _random_start(n, budget, rng):
+def _random_start(n, budget, rng, fixed=None):
     masks = [1 << int(rng.integers(3)) for _ in range(n)]
     cols = 1
+    if fixed:
+        for i, m in fixed.items():
+            masks[i] = m
+        cols = columns(masks)
     for i in rng.permutation(n):
+        if fixed and i in fixed:
+            continue
         for k in (3, 2):
             if cols * k <= budget and rng.random() < 0.4:
                 extra = [o for o in range(3) if not (masks[i] >> o) & 1]
