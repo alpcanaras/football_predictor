@@ -48,7 +48,11 @@ MODEL_DIR = os.path.join(ROOT, 'models', 'v2')
 CACHE = os.path.join(REPORT_DIR, 'features.pkl')
 # Feature sets: 'v1' is the research engine as-is; 'mkt' adds ratings fitted
 # to past pre-match prices (research_features.FeatureState(market=True)).
-FEATURE_SETS = ('v1', 'mkt')
+FEATURE_SETS = ('v1', 'mkt', 'mkttot')
+# FeatureState switches per set; 'mkttot' adds past over/under prices
+SET_FLAGS = {'v1': dict(market=False, totals=False),
+             'mkt': dict(market=True, totals=False),
+             'mkttot': dict(market=True, totals=True)}
 
 
 def cache_path(features: str = 'v1') -> str:
@@ -108,7 +112,7 @@ def build_cache(verbose=True, features: str = 'v1') -> pd.DataFrame:
     if verbose:
         print(f"  loaded {len(raw):,} matches in {time.time()-t0:.0f}s; replaying…")
     t1 = time.time()
-    feats = make_frame(raw, rf.FeatureState(market=features == 'mkt'))
+    feats = make_frame(raw, rf.FeatureState(**SET_FLAGS[features]))
     if verbose:
         print(f"  replayed in {time.time()-t1:.0f}s")
     os.makedirs(REPORT_DIR, exist_ok=True)
@@ -116,7 +120,7 @@ def build_cache(verbose=True, features: str = 'v1') -> pd.DataFrame:
     meta = {
         'built_at': pd.Timestamp.now().isoformat(timespec='seconds'),
         'feature_set': features,
-        'feature_version': rf.version(features == 'mkt'),
+        'feature_version': rf.version(**SET_FLAGS[features]),
         'n_matches': int(len(feats)),
         'date_min': str(feats.Date.min().date()),
         'date_max': str(feats.Date.max().date()),
@@ -162,8 +166,8 @@ def labels(df: pd.DataFrame) -> np.ndarray:
 def matrix(df: pd.DataFrame, recipe: dict | None = None) -> pd.DataFrame:
     """Causal features + a one-hot per registered league (fixed schema).
     A missing feature column raises: never silently zero-fill a feature."""
-    market = (recipe or {}).get('features', 'v1') == 'mkt'
-    x = df[rf.feature_columns(market=market)].astype(float).reset_index(drop=True)
+    flags = SET_FLAGS[(recipe or {}).get('features', 'v1')]
+    x = df[rf.feature_columns(**flags)].astype(float).reset_index(drop=True)
     for lg in sorted(config.LEAGUE_REGISTRY):
         x['league_' + lg] = (df.league.to_numpy() == lg).astype(float)
     return x
@@ -316,7 +320,7 @@ def run(recipe: dict, frame: pd.DataFrame | None = None,
     """Score a recipe on every outer window; returns one row per test match."""
     feats = {r.get('features', 'v1') for r in recipe.get('members') or [recipe]}
     if frame is None:
-        frame = load_cache('mkt' if 'mkt' in feats else 'v1')
+        frame = load_cache(max(feats, key=FEATURE_SETS.index))   # widest set
     rows = []
     t_all = time.time()
     for s in starts:
@@ -425,10 +429,9 @@ def run_experiment(name: str):
     """Run each recipe on the tuning windows (to choose) and the test windows
     (to confirm), always paired against the baseline on the same matches."""
     recipes = EXPERIMENTS[name]
-    need_mkt = any(m.get('features') == 'mkt' for r in recipes
-                   for m in (r.get('members') or [r]))
-    # the mkt cache is the v1 cache plus extra columns, so it serves both
-    frame = load_cache('mkt' if need_mkt else 'v1')
+    sets = {m.get('features', 'v1') for r in recipes for m in (r.get('members') or [r])}
+    # each wider cache is the narrower one plus extra columns, so it serves all
+    frame = load_cache(max(sets, key=FEATURE_SETS.index))
     out = {}
     for tag, starts in (('tune', TUNE_STARTS), ('test', TEST_STARTS)):
         base_name = f"{BASELINE['name']}__{tag}"

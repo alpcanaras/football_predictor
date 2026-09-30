@@ -570,12 +570,22 @@ with tab_match:
                 home, away, team_stats, team_to_league, hist,
                 include_xg=True, prediction_date=pd.Timestamp.now())
             st.session_state.match_pred = {'home': home, 'away': away,
-                                           'pred': pred}
+                                           'pred': pred, 'mode': model_mode()}
         except Exception as e:
             st.session_state.match_pred = {'home': home, 'away': away,
                                            'error': str(e)}
 
     mp = st.session_state.get('match_pred')
+    if mp and mp.get('pred') and mp.get('mode', 'auto') != model_mode():
+        # the switch moved: re-predict so every market (and its odds anchor)
+        # comes from the selected model — cheap once the caches are warm
+        try:
+            mp['pred'] = predict_mod.predict_match(
+                mp['home'], mp['away'], team_stats, team_to_league, hist,
+                include_xg=True, prediction_date=pd.Timestamp.now())
+            mp['mode'] = model_mode()
+        except Exception as e:
+            mp['error'] = str(e)
     if mp and mp.get('error'):
         st.error(f"Could not predict: {mp['error']}")
     elif mp and mp.get('pred'):
@@ -641,16 +651,42 @@ with tab_match:
                            f"is model **{model_src}** (✓).")
 
         cols = st.columns(3)
+        g1, g2 = pred.get('goals_v1', {}), pred.get('goals_v2', {})
+        both = st.session_state.get('show_both', True)
+
+        def _vs(key, fmt):
+            """'v1 57% · v2 65%' under a metric, ✓ on the one in use."""
+            if not both or not (g1.get(key) or g2.get(key)):
+                return
+            used = pred.get('goals_version', 'v1')
+            parts = [f"{name}{' ✓' if used == name else ''} {fmt(g[key])}"
+                     for name, g in (('v1', g1), ('v2', g2)) if g.get(key)]
+            return ' · '.join(parts)
+
         if 'ou25' in pred:
             ou = f"{pred['ou25']['over']:.0%}"
             if pred.get('market', {}).get('ou25_odds'):
                 ou += f"  (book {pred['market']['ou25_odds']['over']:.2f})"
             cols[0].metric("Over 2.5", ou)
+            c = _vs('ou25', lambda d: f"{d['over']:.0%}")
+            if c:
+                cols[0].caption(c)
         if 'btts' in pred:
             cols[1].metric("BTTS", f"{pred['btts']['yes']:.0%}")
+            c = _vs('btts', lambda d: f"{d['yes']:.0%}")
+            if c:
+                cols[1].caption(c)
         if 'xg' in pred:
             cols[2].metric("xG", f"{pred['xg']['home']:.1f} – "
                                  f"{pred['xg']['away']:.1f}")
+            c = _vs('xg', lambda d: f"{d['home']:.1f}–{d['away']:.1f}")
+            if c:
+                cols[2].caption(c)
+        if both and g2:
+            st.caption("Goal markets: v2 is one scoreline model for over/under, "
+                       "BTTS and xG, so they always agree with each other. "
+                       "Over 2.5 is blended with the bookmaker's over/under "
+                       "odds when the feed has them.")
 
         ac = st.columns([2, 1, 3])
         gm = ac[0].radio("Add to coupon", list(toto.GAMES), horizontal=True,
@@ -678,6 +714,7 @@ with tab_fix:
         with st.spinner("Fetching odds feed and predicting…"):
             st.session_state.fix_rows = today_mod.club_section(
                 days, hist, team_stats, team_to_league)
+            st.session_state.fix_mode = model_mode()
 
     frows = st.session_state.get('fix_rows')
     if frows is not None:
@@ -721,6 +758,10 @@ with tab_fix:
             df = pd.DataFrame(table)
             st.caption(f"Showing **{len(shown)}** of {len(frows)} fixtures · "
                        f"model: **{MODE_LABELS[model_mode()]}**.")
+            if st.session_state.get('fix_mode', 'auto') != model_mode():
+                st.info("🧠 The model switch changed since these fixtures were "
+                        "loaded: 1 · X · 2 already follow it, O2.5 / BTTS "
+                        "update on **Load fixtures**.")
             st.dataframe(df, use_container_width=True, hide_index=True,
                          column_config={
                              **PCT_COL,

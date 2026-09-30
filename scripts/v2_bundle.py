@@ -44,6 +44,7 @@ from scripts import v2_train as v2
 warnings.filterwarnings('ignore')
 
 LATEST = os.path.join(v2.MODEL_DIR, 'LATEST')
+LATEST_GOALS = os.path.join(v2.MODEL_DIR, 'LATEST_GOALS')
 SHADOW_LOG = os.path.join(v2.REPORT_DIR, 'shadow', 'shadow_log.csv')
 STATE_DIR = os.path.join(v2.REPORT_DIR, 'state')
 
@@ -62,8 +63,10 @@ def raw_fingerprint() -> str:
 
 
 def feature_set(recipe: dict) -> str:
+    """The widest feature set any member needs (wider caches contain the
+    narrower ones' columns unchanged)."""
     members = recipe.get('members') or [recipe]
-    return 'mkt' if any(m.get('features') == 'mkt' for m in members) else 'v1'
+    return max((m.get('features', 'v1') for m in members), key=v2.FEATURE_SETS.index)
 
 
 def fresh_cache(features: str = 'v1', verbose=True) -> pd.DataFrame:
@@ -74,7 +77,7 @@ def fresh_cache(features: str = 'v1', verbose=True) -> pd.DataFrame:
         with open(path + '.json') as f:
             meta = json.load(f)
         if (meta.get('raw_files_sha256') == fp
-                and meta.get('feature_version') == rf.version(features == 'mkt')):
+                and meta.get('feature_version') == rf.version(**v2.SET_FLAGS[features])):
             if verbose:
                 print(f"  feature cache is current (data through {meta['date_max']})")
             return v2.load_cache(features)
@@ -90,26 +93,32 @@ def _freeze(state: rf.FeatureState) -> rf.FeatureState:
     s = copy.copy(state)
     s.league_results = dict(state.league_results)   # lambdas don't pickle
     s.h2h = dict(state.h2h)
+    s.league_totals = dict(getattr(state, 'league_totals', {}))
     return s
 
 
 def _thaw(state: rf.FeatureState) -> rf.FeatureState:
     state.league_results = defaultdict(lambda: deque(maxlen=150), state.league_results)
     state.h2h = defaultdict(lambda: deque(maxlen=6), state.h2h)
+    state.league_totals = defaultdict(lambda: deque(maxlen=150),
+                                      getattr(state, 'league_totals', {}))
+    if not hasattr(state, 'totals'):                 # pickled before the block
+        state.totals = False
     return state
 
 
-def live_state(market: bool = False, verbose=True) -> rf.FeatureState:
+def live_state(market: bool = False, totals: bool = False,
+               verbose=True) -> rf.FeatureState:
     """FeatureState after every completed match in data/, i.e. ready to
     featurize any fixture on a later day."""
     fp = raw_fingerprint()
-    version = rf.version(market)
+    version = rf.version(market, totals)
     path = os.path.join(STATE_DIR, f'state_{version}_{fp[:16]}.pkl')
     if os.path.isfile(path):
         return _thaw(joblib.load(path))
     t0 = time.time()
     raw, _ = rf.load_raw()
-    _, state = rf.replay(raw, rf.FeatureState(market=market))
+    _, state = rf.replay(raw, rf.FeatureState(market=market, totals=totals))
     os.makedirs(STATE_DIR, exist_ok=True)
     for old in os.listdir(STATE_DIR):     # keep only current states per version
         if old.startswith(f'state_{version}_'):
@@ -153,7 +162,7 @@ def build(recipe: dict, tag: str | None = None) -> str:
         'git_head': _git_head(),
         'recipe': recipe,
         'feature_set': features,
-        'feature_version': rf.version(features == 'mkt'),
+        'feature_version': rf.version(**v2.SET_FLAGS[features]),
         'trained_through': str(last.date()),
         'n_fit': info['n_fit'], 'n_cal': info['n_cal'],
         'temperature': model.temperature,
@@ -186,7 +195,7 @@ def load_bundle(tag: str | None = None):
     d = os.path.join(v2.MODEL_DIR, tag)
     with open(os.path.join(d, 'meta.json')) as f:
         meta = json.load(f)
-    expected = rf.version(meta.get('feature_set', 'v1') == 'mkt')
+    expected = rf.version(**v2.SET_FLAGS[meta.get('feature_set', 'v1')])
     if meta['feature_version'] != expected:
         raise RuntimeError(f"bundle {tag} was built for features {meta['feature_version']}, "
                            f"code is {expected} — rebuild it")
@@ -214,14 +223,17 @@ def serving_bundle():
     return _SERVE['bundle']
 
 
-def serving_state(league: str, market: bool = True) -> rf.FeatureState:
+def serving_state(league: str, market: bool = True,
+                  totals: bool = False) -> rf.FeatureState:
     """Live state for one league, rebuilt only when its data files change."""
-    key = (league, market, _files_key(league))
-    hit = _SERVE.get(('state', league))
+    key = (league, market, totals, _files_key(league))
+    slot = ('state', league, market, totals)       # one per feature variant
+    hit = _SERVE.get(slot)
     if hit is None or hit[0] != key:
         # disk copy survives app restarts; its name pins data + feature code
-        digest = hashlib.sha256(repr((key, rf.version(market))).encode()).hexdigest()[:16]
-        path = os.path.join(STATE_DIR, f'serve_{league}_{digest}.pkl')
+        digest = hashlib.sha256(repr((key, rf.version(market, totals))).encode()).hexdigest()[:16]
+        prefix = f"serve_{league}_{'m' if market else ''}{'t' if totals else ''}_"
+        path = os.path.join(STATE_DIR, prefix + f'{digest}.pkl')
         state = None
         if os.path.isfile(path):
             try:
@@ -230,17 +242,28 @@ def serving_state(league: str, market: bool = True) -> rf.FeatureState:
                 state = None
         if state is None:
             raw, _ = rf.load_raw([league])
-            _, state = rf.replay(raw, rf.FeatureState(market=market))
+            _, state = rf.replay(raw, rf.FeatureState(market=market, totals=totals))
             try:
                 os.makedirs(STATE_DIR, exist_ok=True)
-                for old in os.listdir(STATE_DIR):          # this league's stale copies
-                    if old.startswith(f'serve_{league}_'):
+                for old in os.listdir(STATE_DIR):          # this variant's stale copies
+                    if old.startswith(prefix):
                         os.remove(os.path.join(STATE_DIR, old))
                 joblib.dump(_freeze(state), path)
             except OSError:
                 pass
-        _SERVE[('state', league)] = hit = (key, state)
+        _SERVE[slot] = hit = (key, state)
     return hit[1]
+
+
+def _serving_flags(meta: dict) -> dict:
+    """Feature switches for the live state. With a goals bundle present the
+    1X2 is served from the same (wider) state: the extra totals block is
+    additive, so the 1X2 columns are identical (tests/test_research.py) and
+    each league is replayed once instead of twice."""
+    flags = dict(v2.SET_FLAGS[meta.get('feature_set', 'v1')])
+    if os.path.isfile(LATEST_GOALS):
+        flags = {k: flags[k] or v for k, v in v2.SET_FLAGS['mkttot'].items()}
+    return flags
 
 
 def predict_one(league: str, home: str, away: str, date=None) -> dict | None:
@@ -249,7 +272,7 @@ def predict_one(league: str, home: str, away: str, date=None) -> dict | None:
     if league not in config.LEAGUE_REGISTRY:
         return None
     model, meta = serving_bundle()
-    state = serving_state(league, meta.get('feature_set') == 'mkt')
+    state = serving_state(league, **_serving_flags(meta))
     if (league, home) not in state.teams or (league, away) not in state.teams:
         return None
     day = pd.Timestamp(date if date is not None else pd.Timestamp.now()).normalize()
@@ -284,13 +307,87 @@ def featurize(fixtures: pd.DataFrame, state: rf.FeatureState) -> pd.DataFrame:
 def predict(fixtures: pd.DataFrame, tag: str | None = None,
             state: rf.FeatureState | None = None) -> pd.DataFrame:
     model, meta = load_bundle(tag)
-    state = state or live_state(market=meta.get('feature_set') == 'mkt')
+    state = state or live_state(**v2.SET_FLAGS[meta.get('feature_set', 'v1')])
     feats = featurize(fixtures, state)
     if feats.empty:
         return feats
     feats[['v2A', 'v2D', 'v2H']] = model.predict_proba(feats)
     feats['bundle'] = meta['tag']
     return feats
+
+
+# =============================================================================
+# GOALS BUNDLE  (scripts/v2_goals.py: one scoreline grid for O/U, BTTS, xG)
+# =============================================================================
+def build_goals(recipe: dict, tag: str | None = None) -> str:
+    from scripts import v2_goals
+    features = recipe['features']
+    frame = fresh_cache(features)
+    last = frame.Date.max()
+    tag = tag or f"{pd.Timestamp.now():%Y-%m-%d}_{recipe['name']}"
+    out_dir = os.path.join(v2.MODEL_DIR, tag)
+    if os.path.exists(out_dir):
+        raise FileExistsError(f"{out_dir} exists — bundles are immutable; pick another --tag")
+    t0 = time.time()
+    model = v2_goals.fit_window(recipe, frame, last + pd.Timedelta(days=1))
+    os.makedirs(out_dir)
+    joblib.dump(model, os.path.join(out_dir, 'model.joblib'))
+    with open(v2.cache_path(features) + '.json') as f:
+        cache_meta = json.load(f)
+    meta = {'tag': tag, 'kind': 'goals',
+            'built_at': pd.Timestamp.now().isoformat(timespec='seconds'),
+            'git_head': _git_head(), 'recipe': recipe, 'feature_set': features,
+            'feature_version': rf.version(**v2.SET_FLAGS[features]),
+            'trained_through': str(last.date()), 'calibration': model.calib,
+            'data': cache_meta, 'markets': list(v2_goals.MARKETS) + ['xg']}
+    for key, name in (('compare_goals', 'compare_goals.json'),
+                      # log-linear pool of this model with the O/U 2.5 market,
+                      # fitted for THIS model on the tuning windows
+                      ('ou25_with_odds', 'ou25_blend_v2.json')):
+        p = os.path.join(v2.REPORT_DIR, name)
+        if os.path.isfile(p):
+            with open(p) as f:
+                meta[key] = json.load(f)
+    with open(os.path.join(out_dir, 'meta.json'), 'w') as f:
+        json.dump(meta, f, indent=2, default=str)
+    with open(LATEST_GOALS, 'w') as f:
+        f.write(tag + '\n')
+    print(f"  goals bundle {tag}: trained through {last.date()} calib={model.calib} "
+          f"in {time.time()-t0:.0f}s -> {os.path.relpath(out_dir, config.PROJECT_ROOT)}")
+    return out_dir
+
+
+def serving_goals():
+    """(GoalsModel, meta) of the latest goals bundle; raises if there is none."""
+    if 'goals' not in _SERVE:
+        with open(LATEST_GOALS) as f:
+            tag = f.read().strip()
+        d = os.path.join(v2.MODEL_DIR, tag)
+        with open(os.path.join(d, 'meta.json')) as f:
+            meta = json.load(f)
+        expected = rf.version(**v2.SET_FLAGS[meta['feature_set']])
+        if meta['feature_version'] != expected:
+            raise RuntimeError(f"goals bundle {tag} was built for {meta['feature_version']}, "
+                               f"code is {expected} — rebuild it")
+        _SERVE['goals'] = (joblib.load(os.path.join(d, 'model.joblib')), meta)
+    return _SERVE['goals']
+
+
+def predict_goals_one(league: str, home: str, away: str, date=None) -> dict | None:
+    """v2 goal markets for one fixture: P(over 1.5/2.5/3.5), P(BTTS) and
+    expected goals; None when v2 cannot serve it."""
+    if league not in config.LEAGUE_REGISTRY:
+        return None
+    model, meta = serving_goals()
+    state = serving_state(league, **v2.SET_FLAGS[meta['feature_set']])
+    if (league, home) not in state.teams or (league, away) not in state.teams:
+        return None
+    day = pd.Timestamp(date if date is not None else pd.Timestamp.now()).normalize()
+    day = max(day, state.last_day + pd.Timedelta(days=1))
+    row = {'Date': day, 'league': league, 'HomeTeam': home, 'AwayTeam': away}
+    p = model.predict(pd.DataFrame([dict(state.fixture(row), **row)])).iloc[0]
+    return {'ou15': float(p['ou15']), 'ou25': float(p['ou25']), 'ou35': float(p['ou35']),
+            'btts': float(p['btts']), 'xg_home': float(p['xg_h']), 'xg_away': float(p['xg_a'])}
 
 
 # =============================================================================
@@ -419,6 +516,9 @@ def main():
     b = sub.add_parser('build')
     b.add_argument('--recipe', default=os.path.join(v2.REPORT_DIR, 'selected_recipe.json'))
     b.add_argument('--tag')
+    bg = sub.add_parser('build-goals')
+    bg.add_argument('--recipe', default=os.path.join(v2.REPORT_DIR, 'selected_goals_recipe.json'))
+    bg.add_argument('--tag')
     s = sub.add_parser('shadow')
     s.add_argument('--days', type=int, default=7)
     g = sub.add_parser('grade')
@@ -428,6 +528,9 @@ def main():
     if a.cmd == 'build':
         with open(a.recipe) as f:
             build(json.load(f), a.tag)
+    elif a.cmd == 'build-goals':
+        with open(a.recipe) as f:
+            build_goals(json.load(f), a.tag)
     elif a.cmd == 'shadow':
         shadow(a.days)
     elif a.cmd == 'grade':

@@ -470,7 +470,12 @@ def check_v2_serving(quick: bool) -> None:
     for lg in leagues:
         h, a = last.loc[lg, 'HomeTeam'], last.loc[lg, 'AwayTeam']
         p = v2_bundle.predict_one(lg, h, a)
-        if p and abs(sum(p.values()) - 1) < 1e-6 and min(p.values()) > 0:
+        g = v2_bundle.predict_goals_one(lg, h, a)
+        ok = p and abs(sum(p.values()) - 1) < 1e-6 and min(p.values()) > 0
+        # goal markets from one grid must be coherent
+        ok = ok and g and 1 > g['ou15'] >= g['ou25'] >= g['ou35'] > 0 \
+            and 0 < g['btts'] < 1 and g['xg_home'] > 0 and g['xg_away'] > 0
+        if ok:
             served += 1
         else:
             missing.append(lg)
@@ -484,8 +489,9 @@ def check_v2_serving(quick: bool) -> None:
         h, a = last.loc[lg, 'HomeTeam'], last.loc[lg, 'AwayTeam']
         got = predict_mod.predict_match(h, a, team_stats, t2l, hist,
                                         include_xg=False, model_mode=mode)
-        if got.get('model_version') != want or '1x2_v1' not in got or '1x2_v2' not in got:
-            bad[f'{mode}/{lg}'] = got.get('model_version')
+        if (got.get('model_version') != want or got.get('goals_version') != want
+                or '1x2_v1' not in got or '1x2_v2' not in got or 'goals_v2' not in got):
+            bad[f'{mode}/{lg}'] = (got.get('model_version'), got.get('goals_version'))
     record(PASS if not missing and not bad else FAIL,
            'v2 serves + model switch routes',
            f"{served}/{len(leagues)} leagues in {time.time()-t0:.0f}s, "

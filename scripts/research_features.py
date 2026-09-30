@@ -20,12 +20,18 @@ from scripts import config, data_loader
 
 VERSION = 'causal-day-state-v1'
 MARKET_VERSION = VERSION + '+mkt3'     # FeatureState(market=True)
+TOTALS_TAG = '+tot1'                     # FeatureState(totals=True): additive block
 # Prices a finished match is rated from, best first. Closing prices are
 # allowed HERE because the update runs after the match is complete: they are
 # history by then, like the score. (99.9% of matches carry the average close;
 # pre-match prices exist for only the rich leagues.)
 RATING_ODDS = [('AvgCH', 'AvgCD', 'AvgCA'), ('PSCH', 'PSCD', 'PSCA'),
                ('B365CH', 'B365CD', 'B365CA')]
+# Over/under 2.5 prices a finished match is read from (same rule: history once
+# the match is over). Only the rich leagues publish them (~48% of matches).
+TOTALS_ODDS = [('AvgC>2.5', 'AvgC<2.5'), ('PC>2.5', 'PC<2.5'),
+               ('B365C>2.5', 'B365C<2.5'), ('Avg>2.5', 'Avg<2.5'),
+               ('B365>2.5', 'B365<2.5')]
 # Chosen on the pre-2024 tuning windows only (reports/v2/market_grid*.csv):
 # faster kept helping up to k~260 (1.00707 at k=40 -> 1.00312), then turned.
 # The price-inversion rule tied (1.00320 at lambda .35), including on teams
@@ -146,6 +152,9 @@ class Team:
     mkt_season: str | None = None
     mkt_n: int = 0
     mkt_hist: deque = field(default_factory=lambda: deque(maxlen=10))
+    # totals block (FeatureState(totals=True) only): the market's past view of
+    # how high-scoring this team's matches are
+    tot_hist: deque = field(default_factory=lambda: deque(maxlen=10))
 
 
 def mean(values):
@@ -163,7 +172,7 @@ class FeatureState:
     """
     def __init__(self, k=20.0, season_retention=0.85, market=False,
                  mkt_k=MKT_K, mkt_retention=MKT_RETENTION,
-                 mkt_mode='elo', mkt_lambda=0.2):
+                 mkt_mode='elo', mkt_lambda=0.2, totals=False):
         if not 0 <= season_retention <= 1 or k <= 0:
             raise ValueError('Invalid Elo settings')
         self.k, self.season_retention = float(k), float(season_retention)
@@ -172,6 +181,8 @@ class FeatureState:
         if mkt_mode not in ('elo', 'invert'):
             raise ValueError('mkt_mode must be elo or invert')
         self.mkt_mode, self.mkt_lambda = mkt_mode, float(mkt_lambda)
+        self.totals = bool(totals)
+        self.league_totals = defaultdict(lambda: deque(maxlen=150))
         self.teams = {}
         self.league_results = defaultdict(lambda: deque(maxlen=150))
         self.h2h = defaultdict(lambda: deque(maxlen=6))
@@ -214,7 +225,24 @@ class FeatureState:
         result['LeagueHomeRate'] = mean(self.league_results.get(league, []))
         if self.market:
             result.update(self._market_features(h, a, season))
+        if self.totals:
+            for prefix, team in (('Home', h), ('Away', a)):
+                result[prefix + '_mktover_10'] = mean(team.tot_hist)
+                result[prefix + 'TotN'] = len(team.tot_hist)
+            result['LeagueMktOver'] = mean(self.league_totals.get(league, []))
         return result
+
+    @staticmethod
+    def _over_prob(row):
+        """Margin-free P(over 2.5) from the best available price, or None."""
+        for over, under in TOTALS_ODDS:
+            try:
+                o, u = float(row.get(over, np.nan)), float(row.get(under, np.nan))
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite([o, u]).all() and o > 1 and u > 1:
+                return (1 / o) / (1 / o + 1 / u)
+        return None
 
     # ------------------------------------------------------------------ market
     # Past prices are facts once a match is played, so a rating fitted to them
@@ -304,6 +332,12 @@ class FeatureState:
                 raise ValueError('Cannot update from an unplayed or invalid result')
             if self.market:
                 self._market_update(row, h, a, season, hg, ag)
+            if self.totals:
+                po = self._over_prob(row)
+                if po is not None:
+                    h.tot_hist.append(po)
+                    a.tot_hist.append(po)
+                    self.league_totals[league].append(po)
             win = 1.0 if hg > ag else (0.5 if hg == ag else 0.0)
             delta = self.k * (win - 1/(1+10**((ar-hr-60)/400)))
             for team, prefix, gf, ga, rating, opponent, points, venue in [
@@ -340,10 +374,10 @@ def replay(raw, state=None):
     return pd.concat(frames).reset_index(drop=True), state
 
 
-def feature_columns(market=False):
+def feature_columns(market=False, totals=False):
     dummy = dict(Date='2000-01-01', league='british_pl', HomeTeam='H', AwayTeam='A')
-    return list(FeatureState(market=market).fixture(dummy))
+    return list(FeatureState(market=market, totals=totals).fixture(dummy))
 
 
-def version(market=False):
-    return MARKET_VERSION if market else VERSION
+def version(market=False, totals=False):
+    return (MARKET_VERSION if market else VERSION) + (TOTALS_TAG if totals else '')
