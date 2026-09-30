@@ -66,6 +66,33 @@ class MarketFeatures(unittest.TestCase):
         self.assertEqual(self.M[:len(feature_columns())], feature_columns())
 
 
+class TotalsFeatures(unittest.TestCase):
+    """The over/under block also reads a price only after the match is over."""
+    T = feature_columns(market=True, totals=True)
+
+    def ou(self, day, home='A', away='B', over=1.9, under=1.9, **kw):
+        return priced(day, home, away, **{'AvgC>2.5': over, 'AvgC<2.5': under}, **kw)
+
+    def test_own_price_cannot_change_features(self):
+        raw = pd.DataFrame([self.ou('2025-08-01'), self.ou('2025-08-08', 'B', 'A'),
+                            self.ou('2025-08-15')])
+        st = lambda: FeatureState(market=True, totals=True)
+        original, _ = replay(raw, st())
+        changed = raw.copy()
+        changed.loc[1, ['AvgC>2.5', 'AvgC<2.5']] = [1.2, 4.5]
+        actual, _ = replay(changed, st())
+        pd.testing.assert_frame_equal(original.loc[:1, self.T], actual.loc[:1, self.T])
+        self.assertGreater(actual.loc[2, 'Home_mktover_10'], original.loc[2, 'Home_mktover_10'])
+
+    def test_block_is_additive(self):
+        raw = pd.DataFrame([self.ou('2025-08-01'), self.ou('2025-08-08', 'B', 'A'),
+                            self.ou('2025-08-15')])
+        a, _ = replay(raw, FeatureState(market=True))
+        b, _ = replay(raw, FeatureState(market=True, totals=True))
+        m = feature_columns(market=True)
+        pd.testing.assert_frame_equal(a[m], b[m])
+
+
 class CausalFeatures(unittest.TestCase):
     def test_future_results_cannot_change_earlier_features(self):
         raw = pd.DataFrame([match('2025-08-01'), match('2025-08-08', hg=0, ag=2),
