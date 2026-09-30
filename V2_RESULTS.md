@@ -10,8 +10,9 @@ v1 by default.** The app has a model switch in its sidebar:
 | **v2** | the frozen v2 bundle everywhere |
 
 With bookmaker odds, every mode uses the market. The Match, Fixtures and
-Toto tabs show v1 and v2 side by side. Only the 1X2 has a v2 model:
-over/under, BTTS and the other markets stay v1.
+Toto tabs show v1 and v2 side by side. The switch covers the 1X2 and the
+goal markets (over/under 1.5/2.5/3.5, BTTS, xG; see "Goals model" below).
+Half-time markets stay v1.
 
 Why Turkey went first: the Turkish v1 models are overfit. They score 0.67
 log-loss on a season they trained on, but 1.19–1.25 on the unseen 2026/27
@@ -97,6 +98,52 @@ v2 is trained "as of" the same date.
 
 Market ratings: Elo-style update, k=260, season carry-over 0.9, home
 advantage 60 (`research_features.MKT_*`, version `causal-day-state-v1+mkt3`).
+
+## Goals model (`scripts/v2_goals.py`, bundle `models/v2/2026-09-30_goals_poisson_tuned/`)
+
+- **What it is:** two Poisson rate models (home goals, away goals) on the
+  same causal features. It also uses each team's recent over/under-2.5
+  prices (`FeatureState(totals=True)`, read only once a match is over),
+  plus a Dixon-Coles low-score correction and a goal-level scale set on the
+  calibration window.
+- **Why one grid:** every goal market is read off one grid of scorelines,
+  so the markets cannot contradict each other.
+- **Poisson vs one classifier per market (like v1):**
+  - Tuning windows: better on all four markets, clearly on over 1.5 and BTTS.
+  - Test windows: better on 3 of 4 markets. Over 2.5 is a tie (−0.0004, n.s.).
+- **Inputs, tuning windows:** market ratings help every market
+  (+0.0009..+0.0023). Past over/under prices add +0.0002..+0.0005 on top.
+- **Tuning (60 trials, tuning windows only):** the goals model prefers all
+  seasons equally weighted, unlike the 1X2. Tuned vs untuned, confirmed on
+  test: +0.0005..+0.0006 on every market, all CIs above zero.
+
+**Head-to-head vs production v1** (4,076 matches unseen by v1):
+
+| market | v1 | v2 | gain [95% CI] |
+|---|---|---|---|
+| over 1.5 | 0.5205 | 0.5141 | **+0.0064 [+0.0029, +0.0101]** |
+| over 2.5 | 0.6844 | 0.6757 | **+0.0087 [+0.0049, +0.0124]** |
+| over 3.5 | 0.6261 | 0.6168 | **+0.0093 [+0.0046, +0.0135]** |
+| BTTS | 0.6831 | 0.6796 | +0.0035 [−0.0002, +0.0068] |
+
+**Over 2.5 against the market:**
+- The market is still better: v2 is −0.0044 on 2,197 priced matches.
+- The bundle carries its own pool with the over/under odds (logit weights:
+  model 0.118, book 1.106, fitted on the tuning windows). It ties the
+  market on test, and beats reusing v1's weights by +0.0011.
+- v1's current app blend is itself fine against the market alone
+  (+0.0008, n.s.), so v1's anchoring is unchanged.
+
+## Calibration check (what the Toto numbers rest on)
+
+Test windows 2024–26, 33,101 matches:
+- **Top pick:** when v2 says 45% it happens 44.3%; 64% → 63.7%;
+  84% → 84.2%. Every bin is within its CI.
+- **Draws:** 25.6% predicted, 26.3% happened.
+- **Whole coupons,** 20,000 same-weekend coupons each:
+  - Spor Toto 15 matches, 12+: P(prize) said 1.82%, happened 2.08%.
+  - 13er Wette 13 matches, 10+: said 4.74%, happened 4.90%.
+  - Slightly conservative, as expected when upsets cluster on a weekend.
 
 ## Tried and dropped
 

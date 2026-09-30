@@ -82,6 +82,25 @@ def serves_v2(league: str, mode: str | None = None) -> bool:
     return mode == 'v2' or (mode == 'auto' and league in V2_AUTO_LEAGUES)
 
 
+GOAL_KEYS = ('ou15', 'ou25', 'ou35', 'btts', 'xg')
+
+
+def v2_goals(home_team, away_team, league, prediction_date=None) -> dict | None:
+    """v2 goal markets shaped like v1's ('ou25': {'over','under'}, 'btts':
+    {'yes','no'}, 'xg': {'home','away'}), or None if v2 cannot serve it."""
+    try:
+        from scripts import v2_bundle
+        g = v2_bundle.predict_goals_one(league, home_team, away_team, prediction_date)
+    except Exception:
+        return None
+    if g is None:
+        return None
+    out = {k: {'over': g[k], 'under': 1 - g[k]} for k in ('ou15', 'ou25', 'ou35')}
+    out['btts'] = {'yes': g['btts'], 'no': 1 - g['btts']}
+    out['xg'] = {'home': g['xg_home'], 'away': g['xg_away']}
+    return out
+
+
 def v2_1x2(home_team, away_team, league, prediction_date=None) -> dict | None:
     """The v2 1X2 {'home','draw','away'}, or None if v2 cannot serve it."""
     try:
@@ -141,6 +160,20 @@ def predict_match(home_team, away_team, team_stats, team_to_league,
             if want_v2:
                 predictions['1x2'] = dict(v2)
                 predictions['model_version'] = 'v2'
+    # goal markets follow the same switch (v2 = one scoreline grid for all)
+    predictions['goals_version'] = 'v1'
+    goals_v1 = {k: dict(predictions[k]) for k in GOAL_KEYS if k in predictions}
+    if goals_v1:
+        predictions['goals_v1'] = goals_v1
+    if with_v2 or want_v2:
+        g2 = v2_goals(home_team, away_team, league, prediction_date)
+        if g2 is not None:
+            predictions['goals_v2'] = g2
+            if want_v2:
+                for k, val in g2.items():
+                    if k != 'xg' or include_xg:
+                        predictions[k] = dict(val)
+                predictions['goals_version'] = 'v2'
     _market_anchor(predictions, league, home_team, away_team)
     return predictions
 
@@ -223,6 +256,13 @@ def _market_anchor(predictions: dict, league: str,
                     w_ou = json.load(f).get('ou25_with_odds')
             except Exception:
                 w_ou = None
+            if predictions.get('goals_version') == 'v2':
+                # v2 carries its own pool, fitted for it on the tuning windows
+                try:
+                    from scripts import v2_bundle
+                    w_ou = v2_bundle.serving_goals()[1].get('ou25_with_odds', w_ou)
+                except Exception:
+                    pass
             if w_ou:
                 inv = np.array([1.0 / odds['OddsUnder25'],
                                 1.0 / odds['OddsOver25']])
