@@ -1,0 +1,102 @@
+{
+  "tag": "2026-09-30_goals_poisson_tuned",
+  "kind": "goals",
+  "built_at": "2026-09-30T12:01:54",
+  "git_head": "8b17914",
+  "recipe": {
+    "name": "goals_poisson_tuned",
+    "kind": "poisson",
+    "features": "mkttot",
+    "half_life": 0.0,
+    "lookback_days": 3650,
+    "cal_days": 90,
+    "params": {
+      "n_estimators": 383,
+      "max_depth": 6,
+      "learning_rate": 0.027274840166259806,
+      "min_child_weight": 10.57688108597611,
+      "reg_lambda": 9.611536909060348,
+      "reg_alpha": 0.02429026811715073,
+      "subsample": 0.519166567233177,
+      "colsample_bytree": 0.45786982276591437
+    }
+  },
+  "feature_set": "mkttot",
+  "feature_version": "causal-day-state-v1+mkt3+tot1",
+  "trained_through": "2026-09-28",
+  "calibration": {
+    "scale": 1.050095402792672,
+    "rho": -0.042497451256622416
+  },
+  "data": {
+    "built_at": "2026-09-30T11:44:51",
+    "feature_set": "mkttot",
+    "feature_version": "causal-day-state-v1+mkt3+tot1",
+    "n_matches": 99879,
+    "date_min": "2015-01-10",
+    "date_max": "2026-09-28",
+    "raw_files_sha256": "bd40d129e803f563ced99e1b0fc7bca62c8d9b3c881cad49dc871ae1d4978c81",
+    "n_raw_files": 170
+  },
+  "markets": [
+    "ou15",
+    "ou25",
+    "ou35",
+    "btts",
+    "xg"
+  ],
+  "compare_goals": {
+    "ou15": {
+      "n": 4076,
+      "v1": 0.520452208606799,
+      "v2": 0.5140588738599862,
+      "gain": 0.006393334746812874,
+      "ci": [
+        0.002869855524267971,
+        0.010133548704720755
+      ]
+    },
+    "ou25": {
+      "n": 4076,
+      "v1": 0.6843852317925084,
+      "v2": 0.6756636782604662,
+      "gain": 0.008721553532042124,
+      "ci": [
+        0.004862359684133986,
+        0.012390716513738104
+      ]
+    },
+    "ou35": {
+      "n": 4076,
+      "v1": 0.6260637404800069,
+      "v2": 0.6167740187613894,
+      "gain": 0.009289721718617439,
+      "ci": [
+        0.004640906093782491,
+        0.013478688640175127
+      ]
+    },
+    "btts": {
+      "n": 4076,
+      "v1": 0.6830940775799063,
+      "v2": 0.6795979801792998,
+      "gain": 0.0034960974006064574,
+      "ci": [
+        -0.0001814996683565509,
+        0.006779907728330367
+      ]
+    },
+    "ou25_vs_market": {
+      "n": 2197,
+      "market": 0.6692033696822194,
+      "v2": 0.6736502834767478,
+      "v1": 0.6831620524350444
+    }
+  },
+  "ou25_with_odds": {
+    "model": 0.11798728944613386,
+    "book": 1.1062355292250752,
+    "fitted_on": "v2 goals, tuning windows 2022-23",
+    "n_matches": 15446
+  }
+}

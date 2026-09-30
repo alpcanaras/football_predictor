@@ -340,10 +340,14 @@ def build_goals(recipe: dict, tag: str | None = None) -> str:
             'feature_version': rf.version(**v2.SET_FLAGS[features]),
             'trained_through': str(last.date()), 'calibration': model.calib,
             'data': cache_meta, 'markets': list(v2_goals.MARKETS) + ['xg']}
-    p = os.path.join(v2.REPORT_DIR, 'compare_goals.json')
-    if os.path.isfile(p):
-        with open(p) as f:
-            meta['compare_goals'] = json.load(f)
+    for key, name in (('compare_goals', 'compare_goals.json'),
+                      # log-linear pool of this model with the O/U 2.5 market,
+                      # fitted for THIS model on the tuning windows
+                      ('ou25_with_odds', 'ou25_blend_v2.json')):
+        p = os.path.join(v2.REPORT_DIR, name)
+        if os.path.isfile(p):
+            with open(p) as f:
+                meta[key] = json.load(f)
     with open(os.path.join(out_dir, 'meta.json'), 'w') as f:
         json.dump(meta, f, indent=2, default=str)
     with open(LATEST_GOALS, 'w') as f:
