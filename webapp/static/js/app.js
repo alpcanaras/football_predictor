@@ -8,6 +8,30 @@ import { HistoryPage } from './history.js';
 const PAGES = { build: BuildPage, history: HistoryPage };
 let current = null;
 
+// ------------------------------------------------------------------ theme
+// Dark by default; the button cycles Dark -> Light -> Auto (follow the system).
+const THEMES = { dark: ['🌙', 'Dark'], light: ['☀️', 'Light'], auto: ['🖥', 'Follow the system'] };
+const storedTheme = () => { try { return localStorage.getItem('fp.theme') || 'dark'; } catch { return 'dark'; } };
+function applyTheme() {
+  const t = storedTheme();
+  const dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  const btn = $('#theme-btn');
+  btn.textContent = THEMES[t][0];
+  btn.title = `Theme: ${THEMES[t][1]} (click to change)`;
+}
+function initTheme() {
+  applyTheme();
+  $('#theme-btn').onclick = () => {
+    const order = ['dark', 'light', 'auto'];
+    const next = order[(order.indexOf(storedTheme()) + 1) % order.length];
+    try { localStorage.setItem('fp.theme', next); } catch { /* private mode: lasts until reload */ }
+    applyTheme();
+    toast(`Theme: ${THEMES[next][1]}`, { key: 'theme', ms: 1800 });
+  };
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (storedTheme() === 'auto') applyTheme(); });
+}
+
 async function loadTeams() {
   const { teams } = await api.get('/api/teams');
   store.setTeams(teams.map((t) => ({ ...t })));
@@ -121,4 +145,5 @@ async function runJob(kind, log) {
   } catch (e) { toast(e.message, { error: true }); }
 }
 
+initTheme();
 boot();

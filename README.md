@@ -70,6 +70,7 @@ place, so nothing re-runs or loses what you are typing.
   crowd % (the crowd-aware ticket and its trade-off), “what does more budget
   buy?”, copy / print the ticket, save it to **History** (graded against the
   real results once the matches are played).
+- **Theme.** Dark by default. The 🌙 button next to the data pill cycles Dark → Light → Auto (follow the system) and remembers the choice.
 - **Models.** v2 is the default; with bookmaker odds the odds are always used.
   The 📡 data pill (top right) shows data freshness, runs the updates with a
   live log, and has the model setting (v2 · Auto · v1) tucked away.

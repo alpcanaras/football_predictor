@@ -10,17 +10,19 @@
   --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, Roboto, sans-serif;
   color-scheme: light;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0e1014; --surface: #171a21; --surface-2: #1f232c; --border: #2a2f3a;
-    --text: #e8eaee; --muted: #9aa1ad; --faint: #6b7280;
-    --accent: #8b93ff; --accent-soft: #23264d; --accent-text: #0e1014;
-    --ok: #4ade80; --ok-soft: #12301e; --warn: #fbbf24; --warn-soft: #332611;
-    --bad: #f87171; --bad-soft: #3a1717;
-    --c1: #5b8fd6; --cx: #8f959e; --c2: #f0924f;
-    --shadow: 0 1px 2px rgba(0,0,0,.45);
-    color-scheme: dark;
-  }
+/* the theme is chosen by the header button (Dark by default, Light, or follow
+   the system) and set on <html data-theme> before first paint (see index.html) */
+/* the theme is chosen by the header button (Dark by default, Light, or follow
+   the system) and set on <html data-theme> before first paint (see index.html) */
+:root[data-theme="dark"] {
+  --bg: #0e1014; --surface: #171a21; --surface-2: #1f232c; --border: #2a2f3a;
+  --text: #e8eaee; --muted: #9aa1ad; --faint: #6b7280;
+  --accent: #8b93ff; --accent-soft: #23264d; --accent-text: #0e1014;
+  --ok: #4ade80; --ok-soft: #12301e; --warn: #fbbf24; --warn-soft: #332611;
+  --bad: #f87171; --bad-soft: #3a1717;
+  --c1: #5b8fd6; --cx: #8f959e; --c2: #f0924f;
+  --shadow: 0 1px 2px rgba(0,0,0,.45);
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -49,6 +51,8 @@ h1, h2, h3, h4 { margin: 0; }
 .tabs a { padding: 7px 14px; border-radius: 8px; color: var(--muted); font-weight: 600; white-space: nowrap; }
 .tabs a:hover { background: var(--surface-2); color: var(--text); }
 .tabs a.active { background: var(--accent-soft); color: var(--accent); }
+.top-right { display: flex; align-items: center; gap: 8px; }
+.themebtn { width: 34px; padding: 5px 0; text-align: center; }
 .pill { border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 5px 12px; font-size: 13px; white-space: nowrap; }
 .pill.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); color: var(--warn); }
 .popover {
@@ -181,7 +185,7 @@ input.txt.search { padding-left: 10px; }
 .badge { display: inline-flex; align-items: center; font-size: 11px; font-weight: 600; padding: 0 7px; border-radius: 999px; border: 1px solid currentColor; line-height: 16px; white-space: nowrap; }
 .badge.odds { color: var(--ok); } .badge.v2 { color: #7c3aed; } .badge.v1 { color: var(--muted); }
 .badge.euro { color: #0e7490; } .badge.intl { color: var(--warn); } .badge.none { color: var(--bad); }
-@media (prefers-color-scheme: dark) { .badge.v2 { color: #a78bfa; } .badge.euro { color: #22d3ee; } }
+:root[data-theme="dark"] .badge.v2 { color: #a78bfa; } :root[data-theme="dark"] .badge.euro { color: #22d3ee; }
 
 /* ---------------------------------------------------------------- the coupon slip */
 .slip {
