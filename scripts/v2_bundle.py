@@ -260,6 +260,21 @@ def serving_state(league: str, market: bool = True,
     return hit[1]
 
 
+def _leave_with_parent() -> None:
+    """Runs in each helper process: exit as soon as the parent is gone, so a
+    quit (or a crash) of the app never leaves workers behind."""
+    import threading
+    import time
+    parent = os.getppid()
+
+    def watch():
+        while True:
+            time.sleep(1.0)
+            if os.getppid() != parent:
+                os._exit(0)
+    threading.Thread(target=watch, daemon=True).start()
+
+
 def _warm_one(args):
     league, market, totals = args
     serving_state(league, market, totals)          # leaves the disk copy behind
@@ -291,7 +306,8 @@ def warm(leagues, workers: int = 6) -> int:
     import multiprocessing as mp
     from concurrent.futures import ProcessPoolExecutor
     with ProcessPoolExecutor(max_workers=min(workers, len(todo)),
-                             mp_context=mp.get_context('spawn')) as ex:
+                             mp_context=mp.get_context('spawn'),
+                             initializer=_leave_with_parent) as ex:
         list(ex.map(_warm_one, todo))
     return len(todo)
 

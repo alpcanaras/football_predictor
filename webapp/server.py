@@ -161,8 +161,22 @@ def ping(_r, _b):
     return {'ok': True}
 
 
+def shutdown(delay: float = 0.0) -> None:
+    """Stop the program: helper processes first, then this one."""
+    def go():
+        time.sleep(delay)
+        try:
+            import multiprocessing
+            for p in multiprocessing.active_children():
+                p.terminate()
+        except Exception:
+            pass
+        os._exit(0)
+    threading.Thread(target=go, daemon=True).start()
+
+
 def quit_app(_r, _b):
-    threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0)), daemon=True).start()
+    shutdown(0.3)
     return {'ok': True}
 
 

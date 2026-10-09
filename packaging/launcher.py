@@ -106,9 +106,9 @@ def _idle_watch(started: float) -> None:
         ping = server._PING
         now = time.time()
         if ping['seen'] and now - ping['t'] > IDLE_EXIT_S:
-            os._exit(0)
+            server.shutdown()
         if not ping['seen'] and now - started > NEVER_OPENED_S:
-            os._exit(0)
+            server.shutdown()
 
 
 def main() -> None:
