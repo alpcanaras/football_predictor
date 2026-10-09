@@ -92,6 +92,54 @@ def grid_markets(g: np.ndarray) -> dict[str, np.ndarray]:
     return out
 
 
+def tilt_grid(g: np.ndarray, p1x2=None, ou25=None, btts=None, iters: int = 80,
+              tol: float = 1e-8) -> np.ndarray:
+    """Re-weight scoreline grids so their margins match given probabilities.
+
+    g      (n, G+1, G+1) grids, home goals on the first axis
+    p1x2   (n, 3) target [home, draw, away], or None
+    ou25   (n,)   target P(3 or more goals), or None
+    btts   (n,)   target P(both teams score), or None
+
+    Iterative proportional fitting. Every target is a partition of the grid
+    (the three results; 3+ goals or not; both score or not). A pass scales the
+    cells of each region to its target mass, one partition after another,
+    until all margins agree. Cells keep their relative weights inside a
+    region, so the likeliest scoreline is the likeliest one that is consistent
+    with the other predictions.
+    """
+    n = g.shape[0]
+    gf = g.reshape(n, -1).astype(float)
+    gf = gf / gf.sum(axis=1, keepdims=True)
+    tot = (_I + _J).ravel()
+    both = ((_I > 0) & (_J > 0)).ravel()
+    parts = []                                    # each: [(mask, target (n,)), ...]
+
+    def two_way(mask, p):
+        p = np.clip(np.asarray(p, float), 1e-6, 1 - 1e-6)
+        return [(mask, p), (~mask, 1 - p)]
+
+    if p1x2 is not None:
+        p = np.clip(np.asarray(p1x2, float), 1e-6, None)
+        p = p / p.sum(axis=1, keepdims=True)
+        parts.append([((_I > _J).ravel(), p[:, 0]), ((_I == _J).ravel(), p[:, 1]),
+                      ((_I < _J).ravel(), p[:, 2])])
+    if ou25 is not None:
+        parts.append(two_way(tot >= 3, ou25))
+    if btts is not None:
+        parts.append(two_way(both, btts))
+    for _ in range(iters if len(parts) > 1 else 1):
+        worst = 0.0
+        for regions in parts:
+            for mask, target in regions:
+                cur = gf[:, mask].sum(axis=1)
+                worst = max(worst, float(np.max(np.abs(cur - target))))
+                gf[:, mask] *= (target / np.clip(cur, 1e-12, None))[:, None]
+        if worst < tol:
+            break
+    return (gf / gf.sum(axis=1, keepdims=True)).reshape(g.shape)
+
+
 # =============================================================================
 # MODEL
 # =============================================================================
@@ -118,15 +166,21 @@ class GoalsModel:
     def _X(self, df):
         return v2.matrix(df, self.recipe).reindex(columns=self.columns, fill_value=0.0)
 
+    def predict_grid(self, df: pd.DataFrame) -> np.ndarray:
+        """(n, G+1, G+1): P(home goals = i, away goals = j) for each fixture."""
+        assert self.recipe['kind'] == 'poisson'
+        X = self._X(df)
+        s, rho = self.calib['scale'], self.calib['rho']
+        lh = np.clip(self.models['home'].predict(X) * s, .05, 8)
+        la = np.clip(self.models['away'].predict(X) * s, .05, 8)
+        return grid(lh, la, rho)
+
     def predict(self, df: pd.DataFrame) -> pd.DataFrame:
         """One row per fixture: P(over 1.5/2.5/3.5), P(BTTS), and for the
         poisson kind also 1X2 and expected goals."""
         X = self._X(df)
         if self.recipe['kind'] == 'poisson':
-            s, rho = self.calib['scale'], self.calib['rho']
-            lh = np.clip(self.models['home'].predict(X) * s, .05, 8)
-            la = np.clip(self.models['away'].predict(X) * s, .05, 8)
-            return pd.DataFrame(grid_markets(grid(lh, la, rho)), index=df.index)
+            return pd.DataFrame(grid_markets(self.predict_grid(df)), index=df.index)
         out = {}
         for m in MARKETS:
             p = self.models[m].predict_proba(X)[:, 1]
@@ -404,9 +458,120 @@ def compare(recipe: dict | None = None):
     return out
 
 
+# =============================================================================
+# CORRECT SCORE
+# =============================================================================
+def _actual_cells(df: pd.DataFrame):
+    return (np.minimum(df.FTHG.to_numpy(int), G), np.minimum(df.FTAG.to_numpy(int), G))
+
+
+def league_prior(fit: pd.DataFrame, test: pd.DataFrame) -> np.ndarray:
+    """No-information baseline: each league's own score frequencies in the
+    fitting period (half a count of smoothing per cell)."""
+    out = np.zeros((len(test), G + 1, G + 1))
+    cnt = {}
+    hi, ai = _actual_cells(fit)
+    for lg, idx in fit.reset_index(drop=True).groupby('league').groups.items():
+        c = np.full((G + 1, G + 1), 0.5)
+        np.add.at(c, (hi[idx], ai[idx]), 1)
+        cnt[lg] = c / c.sum()
+    allc = np.full((G + 1, G + 1), 0.5)
+    np.add.at(allc, (hi, ai), 1)
+    allc /= allc.sum()
+    for k, lg in enumerate(test.league.to_numpy()):
+        out[k] = cnt.get(lg, allc)
+    return out
+
+
+def score_experiment(recipe: dict | None = None, starts=None) -> pd.DataFrame:
+    """Which scoreline model finds the real score best? Same windows and
+    protocol as the 1X2 work: fit before each window, predict the window."""
+    from scripts import v2_compare as vc
+    recipe = recipe or tuned_recipe()
+    starts = starts or v2.TEST_STARTS
+    frame = v2.load_cache(recipe['features'])
+    best1x2 = pd.read_pickle(os.path.join(v2.RUN_DIR, 'sel_ens_mkt__test.pkl')).set_index('match_id')
+    rows = []
+    for s0 in starts:
+        t0 = pd.Timestamp(s0)
+        test = frame[(frame.Date >= t0) & (frame.Date < t0 + pd.Timedelta(days=v2.TEST_DAYS))]
+        test = test[test.match_id.isin(best1x2.index)]
+        if test.empty:
+            continue
+        fit, cal, _ = v2.split(frame, s0, test_days=1, cal_days=recipe['cal_days'],
+                               lookback_days=recipe['lookback_days'])
+        model = fit_window(recipe, frame, s0)
+        raw = model.predict_grid(test)
+        b = best1x2.loc[test.match_id]
+        p1 = np.c_[b.pH, b.pD, b.pA]                       # [home, draw, away]
+        mk = test[['t_avg_pre_H', 't_avg_pre_D', 't_avg_pre_A']].to_numpy(float)
+        o = pd.to_numeric(test.get('Avg>2.5'), errors='coerce').to_numpy(float)
+        u = pd.to_numeric(test.get('Avg<2.5'), errors='coerce').to_numpy(float)
+        ou_mk = np.where((o > 1) & (u > 1), (1 / o) / (1 / o + 1 / np.where(u > 1, u, np.nan)), np.nan)
+        has_mk = np.isfinite(mk).all(axis=1)
+        hi, ai = _actual_cells(test)
+        variants = {
+            'baseline (league frequencies)': league_prior(pd.concat([fit, cal]), test),
+            'model grid': raw,
+            'grid tilted to the 1X2 model': tilt_grid(raw, p1=None) if False else tilt_grid(raw, p1x2=p1),
+        }
+        m = grid_markets(raw)
+        variants['grid tilted to 1X2, keeping O/U + BTTS'] = tilt_grid(raw, p1, m['ou25'], m['btts'])
+        mk_grid = raw.copy()
+        if has_mk.any():
+            ou_t = np.where(np.isfinite(ou_mk), ou_mk, m['ou25'])
+            mk_grid[has_mk] = tilt_grid(raw[has_mk], mk[has_mk], ou_t[has_mk], m['btts'][has_mk])
+        variants['grid tilted to the market (odds, O/U)'] = mk_grid
+        for name, G_ in variants.items():
+            pa = np.clip(G_[np.arange(len(test)), hi, ai], 1e-12, None)
+            flat = G_.reshape(len(test), -1)
+            top = np.argsort(-flat, axis=1)[:, :3]
+            act = hi * (G + 1) + ai
+            mm = grid_markets(G_)
+            yb = ((test.FTHG > 0) & (test.FTAG > 0)).to_numpy(int)
+            yo = ((test.FTHG + test.FTAG) >= 3).to_numpy(int)
+            rows.append(pd.DataFrame({
+                'match_id': test.match_id.to_numpy(), 'Date': test.Date.to_numpy(), 'variant': name,
+                'll': -np.log(pa), 'top1': (top[:, 0] == act).astype(float),
+                'top3': (top == act[:, None]).any(axis=1).astype(float),
+                'll_btts': ll_binary(mm['btts'], yb), 'll_ou25': ll_binary(mm['ou25'], yo),
+                'has_market': has_mk, 'pmax': flat.max(axis=1)}))
+    res = pd.concat(rows, ignore_index=True)
+    res['Date'] = pd.to_datetime(res['Date'])
+    return res
+
+
+def print_score_report(res: pd.DataFrame) -> dict:
+    from scripts import v2_compare as vc
+    names = list(dict.fromkeys(res.variant))
+    out = {}
+    for label, sub in (('all matches', res), ('matches with bookmaker odds', res[res.has_market])):
+        n = sub.match_id.nunique()
+        print(f"\n  {label}: {n:,} matches")
+        print(f"  {'scoreline model':<42} {'log-loss':>9} {'top-1':>7} {'top-3':>7}  gain vs the plain model grid (95% weekly CI)")
+        base = sub[sub.variant == names[0]].set_index('match_id')
+        raw = sub[sub.variant == names[1]].set_index('match_id')
+        for nm in names:
+            v = sub[sub.variant == nm].set_index('match_id')
+            d = base.ll - v.ll.reindex(base.index)
+            mean, lo, hi, _ = vc._paired(d.to_numpy(), base.Date)
+            d2 = raw.ll - v.ll.reindex(raw.index)
+            m2, lo2, hi2, _ = vc._paired(d2.to_numpy(), raw.Date)
+            extra = '' if nm in names[:2] else f"{m2:+.4f} [{lo2:+.4f}, {hi2:+.4f}]{'  *' if lo2 > 0 else ''}"
+            print(f"  {nm:<42} {v.ll.mean():>9.4f} {v.top1.mean():>7.1%} {v.top3.mean():>7.1%}  {extra}")
+            if nm not in names[:1]:
+                print(f"      same grid read as BTTS: {v.ll_btts.mean():.5f}   over/under 2.5: {v.ll_ou25.mean():.5f}")
+            out.setdefault(label, {})[nm] = dict(n=int(n), ll=float(v.ll.mean()), top1=float(v.top1.mean()),
+                                                 ll_btts=float(v.ll_btts.mean()), ll_ou25=float(v.ll_ou25.mean()),
+                                                 top3=float(v.top3.mean()), gain_vs_baseline=float(mean),
+                                                 ci_vs_baseline=[float(lo), float(hi)], gain_vs_grid=float(m2),
+                                                 ci_vs_grid=[float(lo2), float(hi2)])
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description='V2 goals model')
-    ap.add_argument('command', choices=['exp', 'tune', 'compare', 'confirm'])
+    ap.add_argument('command', choices=['exp', 'tune', 'compare', 'confirm', 'score'])
     ap.add_argument('--trials', type=int, default=60)
     a = ap.parse_args()
     if a.command == 'exp':
@@ -417,6 +582,11 @@ def main():
         compare()
     elif a.command == 'confirm':
         confirm()
+    elif a.command == 'score':
+        res = score_experiment()
+        rep = print_score_report(res)
+        with open(os.path.join(v2.REPORT_DIR, 'score_eval.json'), 'w') as f:
+            json.dump(rep, f, indent=2)
 
 
 if __name__ == '__main__':

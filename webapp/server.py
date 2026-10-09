@@ -75,8 +75,8 @@ def status(_r, _b):
 
 
 def set_settings(_r, b):
-    if 'model_mode' in b:
-        return ENGINE.set_model_mode(b['model_mode'])
+    if 'auto_update' in b:
+        ENGINE.save_settings(auto_update=bool(b['auto_update']))
     return ENGINE.status()
 
 
@@ -125,8 +125,8 @@ def fixtures(r, _b):
     return ENGINE.fixtures(refresh=r.query_params.get('refresh') == '1')
 
 
-def match(r, _b):
-    return ENGINE.match(r.query_params.get('home', ''), r.query_params.get('away', ''))
+def match(_r, b):
+    return ENGINE.match(b.get('home', ''), b.get('away', ''), b.get('odds'), b.get('ou_odds'))
 
 
 def remember(_r, b):
@@ -173,7 +173,7 @@ routes = [
     Route('/api/sweep', api(sweep), methods=['POST']),
     Route('/api/fill-odds', api(fill_odds), methods=['POST']),
     Route('/api/fixtures', api(fixtures)),
-    Route('/api/match', api(match)),
+    Route('/api/match', api(match), methods=['POST']),
     Route('/api/names/remember', api(remember), methods=['POST']),
     Route('/api/history', api(history)),
     Route('/api/history', api(save_history), methods=['POST']),
