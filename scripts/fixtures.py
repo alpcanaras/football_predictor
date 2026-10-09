@@ -64,7 +64,7 @@ def fetch(force: bool = False) -> None:
 
 def load(fetch_if_missing: bool = True) -> pd.DataFrame:
     """Return upcoming fixtures with uniform columns:
-    league, Date, HomeTeam, AwayTeam, OddsH/D/A, OddsOver25/Under25.
+    league, Date, Time (UK), HomeTeam, AwayTeam, OddsH/D/A, OddsOver25/Under25.
     """
     frames = []
 
@@ -97,7 +97,9 @@ def load(fetch_if_missing: bool = True) -> pd.DataFrame:
     out = out.dropna(subset=['league', 'HomeTeam', 'AwayTeam'])
     out = data_loader.extract_odds(out)
     out['Date'] = pd.to_datetime(out['Date'], format='%d/%m/%Y', errors='coerce')
-    cols = ['league', 'Date', 'HomeTeam', 'AwayTeam',
+    if 'Time' not in out.columns:
+        out['Time'] = None
+    cols = ['league', 'Date', 'Time', 'HomeTeam', 'AwayTeam',
             'OddsH', 'OddsD', 'OddsA', 'OddsOver25', 'OddsUnder25']
     return out[cols]
 

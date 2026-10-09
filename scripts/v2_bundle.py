@@ -118,7 +118,7 @@ def live_state(market: bool = False, totals: bool = False,
         return _thaw(joblib.load(path))
     t0 = time.time()
     raw, _ = rf.load_raw()
-    _, state = rf.replay(raw, rf.FeatureState(market=market, totals=totals))
+    state = rf.build_state(raw, rf.FeatureState(market=market, totals=totals))
     os.makedirs(STATE_DIR, exist_ok=True)
     for old in os.listdir(STATE_DIR):     # keep only current states per version
         if old.startswith(f'state_{version}_'):
@@ -223,6 +223,14 @@ def serving_bundle():
     return _SERVE['bundle']
 
 
+def _state_path(league: str, market: bool, totals: bool, key: tuple) -> tuple[str, str]:
+    """(file, filename prefix) of a league's cached serving state. The name
+    pins the data files and the feature code, so a stale copy is never read."""
+    digest = hashlib.sha256(repr((key, rf.version(market, totals))).encode()).hexdigest()[:16]
+    prefix = f"serve_{league}_{'m' if market else ''}{'t' if totals else ''}_"
+    return os.path.join(STATE_DIR, prefix + f'{digest}.pkl'), prefix
+
+
 def serving_state(league: str, market: bool = True,
                   totals: bool = False) -> rf.FeatureState:
     """Live state for one league, rebuilt only when its data files change."""
@@ -230,10 +238,7 @@ def serving_state(league: str, market: bool = True,
     slot = ('state', league, market, totals)       # one per feature variant
     hit = _SERVE.get(slot)
     if hit is None or hit[0] != key:
-        # disk copy survives app restarts; its name pins data + feature code
-        digest = hashlib.sha256(repr((key, rf.version(market, totals))).encode()).hexdigest()[:16]
-        prefix = f"serve_{league}_{'m' if market else ''}{'t' if totals else ''}_"
-        path = os.path.join(STATE_DIR, prefix + f'{digest}.pkl')
+        path, prefix = _state_path(league, market, totals, key)
         state = None
         if os.path.isfile(path):
             try:
@@ -242,7 +247,7 @@ def serving_state(league: str, market: bool = True,
                 state = None
         if state is None:
             raw, _ = rf.load_raw([league])
-            _, state = rf.replay(raw, rf.FeatureState(market=market, totals=totals))
+            state = rf.build_state(raw, rf.FeatureState(market=market, totals=totals))
             try:
                 os.makedirs(STATE_DIR, exist_ok=True)
                 for old in os.listdir(STATE_DIR):          # this variant's stale copies
@@ -253,6 +258,42 @@ def serving_state(league: str, market: bool = True,
                 pass
         _SERVE[slot] = hit = (key, state)
     return hit[1]
+
+
+def _warm_one(args):
+    league, market, totals = args
+    serving_state(league, market, totals)          # leaves the disk copy behind
+    return league
+
+
+def warm(leagues, workers: int = 6) -> int:
+    """Make sure these leagues' serving states exist on disk, building the
+    missing ones in parallel processes (each is independent CPU work), so the
+    first prediction for a league after a data refresh is not a pause."""
+    try:
+        _, meta = serving_bundle()
+        flags = _serving_flags(meta)
+    except Exception:
+        return 0
+    todo = []
+    for lg in leagues:
+        if lg not in config.LEAGUE_REGISTRY:
+            continue
+        path, _ = _state_path(lg, flags['market'], flags['totals'],
+                              (lg, flags['market'], flags['totals'], _files_key(lg)))
+        if not os.path.isfile(path):
+            todo.append((lg, flags['market'], flags['totals']))
+    if not todo:
+        return 0
+    if len(todo) == 1:
+        _warm_one(todo[0])
+        return 1
+    import multiprocessing as mp
+    from concurrent.futures import ProcessPoolExecutor
+    with ProcessPoolExecutor(max_workers=min(workers, len(todo)),
+                             mp_context=mp.get_context('spawn')) as ex:
+        list(ex.map(_warm_one, todo))
+    return len(todo)
 
 
 def _serving_flags(meta: dict) -> dict:

@@ -24,21 +24,53 @@ export function debounce(fn, ms) {
   let t;
   const d = (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   d.flush = (...args) => { clearTimeout(t); fn(...args); };
+  d.cancel = () => clearTimeout(t);
   return d;
 }
 
 export const pct = (p, d = 0) => (p == null ? '—' : `${(p * 100).toFixed(d)}%`);
-export const fold = (s) => String(s || '').normalize('NFKD').replace(/[̀-ͯ]/g, '')
-  .replace(/ı/g, 'i').toLowerCase().trim();
 export const fair = (p) => (p > 0 ? (1 / p).toFixed(2) : '—');
-export const fmtDate = (s) => {
-  const d = new Date(s + (String(s).length === 10 ? 'T12:00:00' : ''));
-  return d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-};
+export const pct3 = (p) => (p ? p.map((x) => Math.round(x * 100)).join('·') : '—');
 
-// ------------------------------------------------------------ probability bar
-export function probBar(p, { thin = false, pending = false, title } = {}) {
-  const bar = h('div', { class: `bar${thin ? ' thin' : ''}${pending ? ' pending' : ''}`, title: title || '' });
+// Same folding as scripts/names.norm on the server: accents, Turkish dotless i,
+// apostrophes, punctuation. The server stores `keys` already folded this way.
+const TRANSLIT = { 'ı': 'i', 'İ': 'i', 'ß': 'ss', 'ø': 'o', 'Ø': 'o', 'æ': 'ae', 'Æ': 'ae', 'œ': 'oe', 'đ': 'd', 'ð': 'd', 'þ': 'th', 'ł': 'l', 'Ł': 'l' };
+export function norm(s) {
+  let t = String(s ?? '').replace(/[ıİßøØæÆœđðþłŁ]/g, (c) => TRANSLIT[c]);
+  t = t.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  t = t.replace(/['’`´]/g, '').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ');
+  return t.trim().replace(/\s+/g, ' ');
+}
+export const fold = norm;
+
+// ------------------------------------------------------------ kickoff times
+// football-data publishes kickoff in UK time. Show it in the viewer's own.
+function londonOffsetMinutes(utcMs) {
+  const f = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const p = Object.fromEntries(f.formatToParts(new Date(utcMs)).map((x) => [x.type, x.value]));
+  return (Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute) - utcMs) / 60000;
+}
+export function kickoff(dateStr, timeStr) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!timeStr) return { date: new Date(y, m - 1, d, 12), hasTime: false };
+  const [hh, mm] = timeStr.split(':').map(Number);
+  const guess = Date.UTC(y, m - 1, d, hh, mm);
+  return { date: new Date(guess - londonOffsetMinutes(guess) * 60000), hasTime: true };
+}
+export const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export const hhmm = (d) => d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+export function dayLabel(d) {
+  const today = new Date(); today.setHours(12, 0, 0, 0);
+  const x = new Date(d); x.setHours(12, 0, 0, 0);
+  const diff = Math.round((x - today) / 86400000);
+  const base = x.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+  return diff === 0 ? `Today · ${base}` : diff === 1 ? `Tomorrow · ${base}` : base;
+}
+
+// ------------------------------------------------------------ probability bits
+export function probBar(p, { thin = false, pending = false } = {}) {
+  const bar = h('div', { class: `bar${thin ? ' thin' : ''}${pending ? ' pending' : ''}` });
   if (p) setBar(bar, p);
   return bar;
 }
@@ -58,24 +90,37 @@ export function legend() {
     h('span', {}, h('i', { style: { background: 'var(--c2)' } }), '2 away'));
 }
 
-// ------------------------------------------------------------ source badges
+// Three outcome tiles "1 49 | X 25 | 2 27"; the likeliest is emphasised.
+export function outcomeTiles(p, { src } = {}) {
+  const top = p ? p.indexOf(Math.max(...p)) : -1;
+  return h('div', { class: `tiles3${src ? ` src-${src}` : ''}` },
+    ...['1', 'X', '2'].map((s, i) => h('div', {
+      class: `t3 t3-${s}${i === top ? ' top' : ''}${p ? '' : ' empty'}`,
+      title: p ? `${s}: ${pct(p[i], 1)} · fair odds ${fair(p[i])}` : '',
+    }, h('b', {}, s), h('span', {}, p ? Math.round(p[i] * 100) : '·'))));
+}
+
+// source badges
 const SRC = {
-  odds: ['odds', 'Bookmaker odds (typed on the coupon) — the best information there is'],
-  feed: ['feed odds', 'Bookmaker odds found in the live feed'],
-  v2: ['v2', 'Club model v2'], v1: ['v1', 'Club model v1 (production)'],
-  euro: ['euro', 'Cross-league clubs via global club Elo (UCL/UEL)'],
+  odds: ['odds', 'Bookmaker odds — the best information there is'],
+  v2: ['model', 'Model v2 (no bookmaker odds for this match)'],
+  v1: ['model v1', 'Model v1 (v2 had no data for these teams)'],
+  euro: ['club elo', 'Cross-league clubs priced from global club ratings'],
   intl: ['nations', 'National-team model'],
-  none: ['no data', 'Not recognised — 1/3 each until you fix the name or add odds'],
+  none: ['no data', 'Not recognised — counted as ⅓ each until you fix the name or add odds'],
 };
 export function badge(src) {
+  if (!src) return h('span');
   const [label, tip] = SRC[src] || [src, ''];
   return h('span', { class: `badge ${src}`, title: tip }, label);
 }
 
 // ------------------------------------------------------------ toasts / modal
-export function toast(msg, { action, onAction, error = false, ms = 3800 } = {}) {
+export function toast(msg, { action, onAction, error = false, ms = 3800, key } = {}) {
   const box = document.getElementById('toasts');
-  const t = h('div', { class: `toast${error ? ' err' : ''}` }, msg);
+  if (key) box.querySelectorAll(`[data-key="${key}"]`).forEach((e) => e.remove());   // newest replaces older
+  while (box.children.length >= 3) box.firstChild.remove();
+  const t = h('div', { class: `toast${error ? ' err' : ''}`, 'data-key': key || '' }, msg);
   if (action) {
     t.append(h('button', { onclick: () => { onAction?.(); t.remove(); } }, action));
     ms = Math.max(ms, 7000);
@@ -84,76 +129,109 @@ export function toast(msg, { action, onAction, error = false, ms = 3800 } = {}) 
   setTimeout(() => t.remove(), ms);
 }
 
-export function modal(title, body, buttons = []) {
+export function modal(title, body, buttons = [], { wide = false } = {}) {
   const back = h('div', { class: 'modal-back' });
-  const close = () => back.remove();
-  const m = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' },
-    h('h3', {}, title), body,
-    h('div', { class: 'row', style: { justifyContent: 'flex-end', marginTop: '14px' } },
+  const close = () => { back.remove(); document.removeEventListener('keydown', esc); };
+  function esc(e) { if (e.key === 'Escape') close(); }
+  const head = h('div', { class: 'modal-head' }, h('h3', {}, title), h('button', { class: 'iconbtn', title: 'Close', onclick: close }, '✕'));
+  const m = h('div', { class: `modal${wide ? ' wide' : ''}`, role: 'dialog', 'aria-modal': 'true' }, head, body,
+    buttons.length ? h('div', { class: 'row end', style: { marginTop: '14px' } },
       ...buttons.map(([label, fn, cls]) => h('button', {
         class: `btn ${cls || ''}`, onclick: async () => { if ((await fn?.()) !== false) close(); },
-      }, label))));
+      }, label))) : '');
   back.append(m);
   back.addEventListener('mousedown', (e) => { if (e.target === back) close(); });
-  document.addEventListener('keydown', function esc(e) {
-    if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc); }
-  });
+  document.addEventListener('keydown', esc);
   document.body.append(back);
   return { close, el: m };
 }
 
+// ------------------------------------------------------------ text field
+// A text input that is quick to correct: a clear (×) button, and when focus
+// arrives by Tab/Enter the whole text is selected so typing replaces it.
+export function textField({ value = '', placeholder = '', cls = '', onInput, onCommit, inputmode } = {}) {
+  const input = h('input', { class: `txt ${cls}`.trim(), value, placeholder, spellcheck: false, inputmode, autocomplete: 'off' });
+  const clear = h('button', {
+    class: 'clearbtn', tabindex: -1, title: 'Clear', type: 'button',
+    onmousedown: (e) => {
+      e.preventDefault();
+      input.value = ''; input.focus(); sync();
+      onInput?.(''); onCommit?.('');
+    },
+  }, '×');
+  const wrap = h('div', { class: 'field' }, input, clear);
+  const sync = () => wrap.classList.toggle('has', input.value.length > 0);
+  let byMouse = false;
+  input.addEventListener('mousedown', () => { byMouse = true; setTimeout(() => { byMouse = false; }, 250); });
+  input.addEventListener('focus', () => { if (!byMouse) input.select(); });
+  input.addEventListener('input', () => { sync(); onInput?.(input.value); });
+  input.addEventListener('change', () => onCommit?.(input.value));
+  sync();
+  return { wrap, input, sync, set(v) { input.value = v; sync(); } };
+}
+
 // ------------------------------------------------------------ autocomplete
-// Free text is always allowed (a name we don't know is flagged, not erased);
-// the list only helps. Enter/Tab picks the highlighted item, Esc closes.
+// Matches the typed text against every name a team goes by (full name, data
+// name, nicknames) — accent- and punctuation-insensitive. Free text is always
+// allowed: an unknown name is flagged, not erased. Enter/Tab picks the
+// highlighted item, ↑↓ moves, Esc closes.
 export class Autocomplete {
-  constructor(input, { source, onPick, filter } = {}) {
-    this.input = input; this.source = source; this.onPick = onPick; this.filter = filter;
+  constructor(input, { source, onPick, filter, limit = 8 } = {}) {
+    this.input = input; this.source = source; this.onPick = onPick; this.filter = filter; this.limit = limit;
     this.list = null; this.items = []; this.hi = 0;
-    const wrap = input.parentElement;
-    wrap.classList.add('ac');
-    input.setAttribute('autocomplete', 'off');
+    const host = input.closest('.field') || input.parentElement;
+    host.classList.add('ac');
+    this.host = host;
     input.addEventListener('input', () => this.open());
     input.addEventListener('focus', () => { if (input.value) this.open(); });
     input.addEventListener('blur', () => setTimeout(() => this.close(), 120));
     input.addEventListener('keydown', (e) => this.key(e));
   }
-  matches(q) {
-    const f = fold(q);
-    if (!f) return [];
+  rank(t, q, words) {
+    let best = 9;
+    for (const k of t.keys) {
+      if (k.startsWith(q)) { best = Math.min(best, 0); break; }
+      if (k.includes(` ${q}`)) best = Math.min(best, 1);
+      else if (k.includes(q)) best = Math.min(best, 2);
+      else if (words.length > 1 && words.every((w) => k.includes(w))) best = Math.min(best, 3);
+    }
+    return best;
+  }
+  matches(text) {
+    const q = norm(text);
+    if (!q) return [];
+    const words = q.split(' ');
     const out = [];
     for (const t of this.source()) {
       if (this.filter && !this.filter(t)) continue;
-      const i = t._f.indexOf(f);
-      if (i < 0) continue;
-      const score = (i === 0 ? 0 : t._f[i - 1] === ' ' ? 1 : 2) + t._f.length / 100;
-      out.push([score, t]);
+      const r = this.rank(t, q, words);
+      if (r < 9) out.push([r, t]);
     }
-    out.sort((a, b) => a[0] - b[0]);
-    return out.slice(0, 8).map((x) => x[1]);
+    out.sort((a, b) => a[0] - b[0] || a[1].display.length - b[1].display.length);
+    return out.slice(0, this.limit).map((x) => x[1]);
   }
   open() {
     this.items = this.matches(this.input.value);
-    if (!this.items.length || (this.items.length === 1 && this.items[0].name === this.input.value)) {
-      this.close(); return;
-    }
+    if (!this.items.length) { this.close(); return; }
     this.hi = 0;
-    if (!this.list) {
-      this.list = h('div', { class: 'ac-list' });
-      this.input.parentElement.append(this.list);
-    }
+    if (!this.list) { this.list = h('div', { class: 'ac-list' }); this.host.append(this.list); }
     this.render();
   }
   render() {
-    const f = fold(this.input.value);
+    const q = norm(this.input.value);
     this.list.replaceChildren(...this.items.map((t, i) => {
-      const at = t._f.indexOf(f);
-      const name = at >= 0
-        ? [t.name.slice(0, at), h('mark', {}, t.name.slice(at, at + f.length)), t.name.slice(at + f.length)]
-        : [t.name];
+      const d = norm(t.display); const at = d.indexOf(q);
+      // highlight only when the display name itself (not an alias) contains the text
+      const label = (at >= 0 && d.length === t.display.length)
+        ? [t.display.slice(0, at), h('mark', {}, t.display.slice(at, at + q.length)), t.display.slice(at + q.length)]
+        : [t.display];
+      const alias = at < 0 ? t.keys.find((k) => k.includes(q)) : null;
       return h('div', {
         class: `ac-item${i === this.hi ? ' hi' : ''}`,
         onmousedown: (e) => { e.preventDefault(); this.pick(t); },
-      }, h('span', {}, ...name), h('span', { class: 'lg' }, t.league_name || ''));
+        onmousemove: () => { if (this.hi !== i) { this.hi = i; this.render(); } },
+      }, h('span', { class: 'nm' }, ...label, alias ? h('i', { class: 'alias' }, ` · ${alias}`) : ''),
+      h('span', { class: 'lg' }, t.league_name || ''));
     }));
   }
   key(e) {
@@ -161,16 +239,15 @@ export class Autocomplete {
     if (e.key === 'ArrowDown') { this.hi = Math.min(this.hi + 1, this.items.length - 1); this.render(); e.preventDefault(); }
     else if (e.key === 'ArrowUp') { this.hi = Math.max(this.hi - 1, 0); this.render(); e.preventDefault(); }
     else if ((e.key === 'Enter' || e.key === 'Tab') && this.items[this.hi]) {
-      if (fold(this.input.value) !== this.items[this.hi]._f) this.pick(this.items[this.hi]);
-      else this.close();
+      this.pick(this.items[this.hi]);
       if (e.key === 'Enter') e.preventDefault();
-    } else if (e.key === 'Escape') this.close();
+    } else if (e.key === 'Escape') { this.close(); e.stopPropagation(); }
   }
   pick(t) {
-    this.input.value = t.name;
+    this.input.value = t.display;
     this.close();
+    this.input.dispatchEvent(new Event('input', { bubbles: true }));
     this.onPick?.(t);
-    this.input.dispatchEvent(new Event('change', { bubbles: true }));
   }
   close() { this.list?.remove(); this.list = null; }
 }

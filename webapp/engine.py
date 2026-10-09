@@ -4,14 +4,18 @@ Engine behind the web app
 Loads the heavy context once (match data, team tables, national-team model)
 and exposes plain functions — JSON-ready dicts in, dicts out — over the
 existing modules. Nothing here re-implements a model or the Toto maths:
-probabilities come from scripts/toto.match_probs (odds > club model v1/v2 >
+probabilities come from scripts/toto.match_probs (odds > club model v2/v1 >
 European clubs > national teams), tickets from scripts/ticket.build, history
-from scripts/track.
+from scripts/track, names from scripts/names.
 
-Coupons stay in data/_toto/<game>.txt in the same one-line-per-match format
-the Streamlit app uses ("Home - Away  1.95 3.40 3.90"), so both apps share
-them. What the text format cannot hold — crowd %, locked symbols, budget,
-objective — lives next to it in <game>.meta.json.
+One coupon, no game switch. Both pools pay a prize for at most three wrong
+(13er Wette: 10+ of 13, Spor Toto: 12+ of 15), so the coupon is simply "the
+matches you added" and its size decides what it is: 13 plays as the 13er
+Wette, 15 as Spor Toto, anything else is previewed with the same rule.
+
+The coupon lives in data/_toto/coupon.txt in the one-line-per-match format
+the classic app uses ("Home - Away  1.95 3.40 3.90"); what that format cannot
+hold (crowd %, locked symbols, budget) lives next to it in coupon.meta.json.
 """
 
 from __future__ import annotations
@@ -30,20 +34,37 @@ import pandas as pd
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-from scripts import config, toto  # noqa: E402
+from scripts import config, names, toto  # noqa: E402
 from scripts import predict as predict_mod  # noqa: E402
 from scripts import ticket as ticket_mod  # noqa: E402
 
 COUPON_DIR = os.environ.get('FOOTBALL_PREDICTOR_TOTO_DIR',
                             os.path.join(config.DATA_DIR, '_toto'))
 SETTINGS_FILE = os.path.join(COUPON_DIR, 'settings.json')
-GAME_INFO = {
-    'turkish': {'label': 'Spor Toto', 'flag': '🇹🇷'},
-    'german': {'label': '13er Wette', 'flag': '🇩🇪'},
-}
+COUPON_FILE = os.path.join(COUPON_DIR, 'coupon.txt')
+COUPON_META = os.path.join(COUPON_DIR, 'coupon.meta.json')
+
+ALLOWED_WRONG = 3                      # both pools: a prize needs at most 3 wrong
+GAMES = [  # (matches, label, flag, prize_from)
+    (13, '13er Wette', '🇩🇪', 10),
+    (15, 'Spor Toto', '🇹🇷', 12),
+]
+FIXTURE_DAYS = 14
+FIXTURE_TTL = 15 * 60
 # Model calls touch shared caches (v2 per-league states, the intl model) that
 # are not safe to fill from two threads at once; one user, so serialise.
 MODEL_LOCK = threading.RLock()
+
+
+def game_for(n: int) -> dict:
+    """What a coupon of n matches is."""
+    for size, label, flag, prize in GAMES:
+        if n == size:
+            return {'n': n, 'label': label, 'flag': flag, 'prize_from': prize,
+                    'complete': True, 'key': 'german' if size == 13 else 'turkish'}
+    return {'n': n, 'label': None, 'flag': '', 'complete': False,
+            'prize_from': max(1, n - ALLOWED_WRONG),
+            'key': 'german' if n <= 13 else 'turkish'}
 
 
 def _disp(league: str | None) -> str:
@@ -69,16 +90,19 @@ def _atomic_write(path: str, text: str) -> None:
 
 def row_key(home: str, away: str) -> str:
     """Order-insensitive, accent-folded identity of a fixture."""
-    return '|'.join(sorted((toto._fold(home), toto._fold(away))))
+    return '|'.join(sorted((names.norm(home), names.norm(away))))
 
 
 class Engine:
     def __init__(self):
         self.state, self.step, self.error = 'starting', '', None
         self.ctx = None
+        self.index: names.NameIndex | None = None
         self.teams: list[dict] = []
         self.loaded_at = None
-        self._fixtures_cache: dict = {}
+        self.fx = {'state': 'idle', 'done': 0, 'total': 0, 'rows': [], 'mode': None,
+                   'loaded_at': None, 'error': None}
+        self._fx_lock = threading.Lock()
         self._job = {'running': False, 'kind': None, 'log': '', 'ok': None,
                      'started': None, 'finished': None}
 
@@ -96,22 +120,20 @@ class Engine:
             t2l = utils.get_team_to_league_map(hist)
             self.step = 'National-team model'
             ic = toto._load_intl()
-            self.step = 'Settings'
-            predict_mod.set_model_mode(self.settings().get('model_mode', 'auto'))
-            teams = [{'name': t, 'league': lg, 'league_name': _disp(lg), 'kind': 'club'}
-                     for t, lg in t2l.items()]
-            teams += [{'name': n, 'league': None, 'league_name': 'National team',
-                       'kind': 'national'} for n in ic['ratings']]
-            teams.sort(key=lambda t: (t['kind'] != 'club', t['name'].lower()))
+            self.step = 'Team names'
+            predict_mod.set_model_mode(self.settings().get('model_mode', 'v2'))
+            self.index = names.NameIndex(t2l, sorted(ic['ratings']))
+            self.teams = self._team_list()
             last = hist.groupby('league')['Date'].max()
             self.ctx = {'hist': hist, 'team_stats': team_stats,
                         'team_to_league': t2l, 'teams': set(t2l),
                         'weights': toto._load_blend_weights(),
                         'last_result': {lg: pd.Timestamp(d) for lg, d in last.items()}}
-            self.teams = teams
-            self._fixtures_cache.clear()
+            self.fx = {'state': 'idle', 'done': 0, 'total': 0, 'rows': [], 'mode': None,
+                       'loaded_at': None, 'error': None}
             self.loaded_at = time.time()
             self.state, self.step = 'ready', ''
+            self.start_fixtures()                 # prices the week ahead in the background
         except Exception as e:                           # shown on the page
             self.state, self.error = 'error', f'{type(e).__name__}: {e}'
             traceback.print_exc()
@@ -122,6 +144,16 @@ class Engine:
     def need_ready(self):
         if self.state != 'ready':
             raise RuntimeError('Still warming up — try again in a few seconds.')
+
+    def _team_list(self) -> list[dict]:
+        idx = self.index
+        out = []
+        for canon, (kind, lg) in idx.entries.items():
+            out.append({'name': canon, 'display': idx.display_of[canon], 'kind': kind,
+                        'league': lg, 'league_name': _disp(lg) if kind == 'club' else 'National team',
+                        'keys': idx.search_keys(canon)})
+        out.sort(key=lambda t: (t['kind'] != 'club', names.norm(t['display'])))
+        return out
 
     # -------------------------------------------------------------- settings
     def settings(self) -> dict:
@@ -136,16 +168,16 @@ class Engine:
         s = self.settings()
         s['model_mode'] = mode
         _atomic_write(SETTINGS_FILE, json.dumps(s, indent=2))
-        self._fixtures_cache.clear()
+        self.start_fixtures(force=True)
         return self.status()
 
     # ---------------------------------------------------------------- status
     def status(self) -> dict:
         out = {'state': self.state, 'step': self.step, 'error': self.error,
                'model_mode': predict_mod.get_model_mode(),
-               'v2_auto_leagues': sorted(predict_mod.V2_AUTO_LEAGUES),
-               'games': {g: {'n': n, 'threshold': t, 'top': top, **GAME_INFO.get(g, {})}
-                         for g, (n, t, top) in toto.GAMES.items()},
+               'allowed_wrong': ALLOWED_WRONG,
+               'games': [{'n': n, 'label': lab, 'flag': flag, 'prize_from': pf}
+                         for n, lab, flag, pf in GAMES],
                'job': {k: v for k, v in self._job.items() if k != 'log'}}
         try:
             from scripts import v2_bundle
@@ -173,21 +205,14 @@ class Engine:
         return out
 
     # ---------------------------------------------------------------- coupon
-    def _paths(self, game: str):
-        if game not in toto.GAMES:
-            raise ValueError(f'unknown game {game!r}')
-        return (os.path.join(COUPON_DIR, f'{game}.txt'),
-                os.path.join(COUPON_DIR, f'{game}.meta.json'))
-
-    def load_coupon(self, game: str) -> dict:
-        txt, meta_p = self._paths(game)
+    def load_coupon(self) -> dict:
         try:
-            with open(txt, encoding='utf-8') as f:
+            with open(COUPON_FILE, encoding='utf-8') as f:
                 text = f.read()
         except OSError:
             text = ''
         try:
-            with open(meta_p, encoding='utf-8') as f:
+            with open(COUPON_META, encoding='utf-8') as f:
                 meta = json.load(f)
         except (OSError, ValueError):
             meta = {}
@@ -199,15 +224,12 @@ class Engine:
             extra = per.get(row_key(r['home'], r['away']), {})
             rows.append({'home': str(r['home']), 'away': str(r['away']), 'odds': odds,
                          'crowd': extra.get('crowd'), 'lock': extra.get('lock')})
-        n, thr, top = toto.GAMES[game]
-        return {'game': game, 'n': n, 'threshold': thr, 'top': top, 'rows': rows,
-                'budget': int(meta.get('budget', 1)),
+        return {'rows': rows, 'budget': int(meta.get('budget', 1)),
                 'tilt': float(meta.get('tilt', ticket_mod.DEFAULT_TILT)),
                 'objective': meta.get('objective', 'hit'),
                 'updated': meta.get('updated')}
 
-    def save_coupon(self, game: str, body: dict) -> dict:
-        txt, meta_p = self._paths(game)
+    def save_coupon(self, body: dict) -> dict:
         lines, per = [], {}
         for r in body.get('rows', []):
             home, away = str(r.get('home') or '').strip(), str(r.get('away') or '').strip()
@@ -225,13 +247,26 @@ class Engine:
                 extra['lock'] = r['lock']
             if extra:
                 per[row_key(home, away)] = extra
-        _atomic_write(txt, '\n'.join(lines))
+        _atomic_write(COUPON_FILE, '\n'.join(lines))
         meta = {'rows': per, 'budget': int(body.get('budget', 1)),
                 'tilt': float(body.get('tilt', ticket_mod.DEFAULT_TILT)),
                 'objective': body.get('objective', 'hit'),
                 'updated': pd.Timestamp.now().isoformat(timespec='seconds')}
-        _atomic_write(meta_p, json.dumps(meta, indent=2, ensure_ascii=False))
+        _atomic_write(COUPON_META, json.dumps(meta, indent=2, ensure_ascii=False))
         return {'ok': True, 'n': len(lines), 'updated': meta['updated']}
+
+    def legacy(self) -> dict:
+        """Rows of the two coupons the classic app kept, to import once."""
+        out = {}
+        for game in ('turkish', 'german'):
+            try:
+                with open(os.path.join(COUPON_DIR, f'{game}.txt'), encoding='utf-8') as f:
+                    rows = self.parse_text(f.read())
+            except OSError:
+                rows = []
+            if rows:
+                out[game] = rows
+        return out
 
     def parse_text(self, text: str) -> list[dict]:
         out = []
@@ -241,47 +276,55 @@ class Engine:
             out.append({'home': str(r['home']), 'away': str(r['away']), 'odds': odds})
         return out
 
-    # ------------------------------------------------------------- analysis
-    def _known(self, name: str, ic: dict) -> str | None:
-        """How a coupon name resolves: 'club', 'national', 'euro' or None."""
-        if toto._fuzzy(name, self.ctx['teams']):
-            return 'club'
-        if toto._intl_name(name, ic):
-            return 'national'
+    # ----------------------------------------------------------------- names
+    def remember_name(self, typed: str, canonical: str) -> dict:
+        self.need_ready()
+        return {'ok': self.index.remember(typed, canonical)}
+
+    def _side(self, typed: str) -> dict:
+        """One team name -> {canonical, display, kind, how, suggest}."""
+        m = self.index.resolve(typed)
+        if m:
+            return {'canonical': m.canonical, 'display': m.display, 'kind': m.kind,
+                    'how': m.how, 'league': m.league, 'suggest': []}
+        # a club outside the modelled leagues can still be priced via club Elo
         try:
             from scripts import clubs_europe
-            if clubs_europe.resolve(name):
-                return 'euro'
+            if clubs_europe.resolve(typed):
+                return {'canonical': typed, 'display': typed, 'kind': 'euro',
+                        'how': 'euro', 'league': None, 'suggest': []}
         except Exception:
             pass
-        return None
+        sug = [{'name': c, 'display': self.index.display_of[c],
+                'league_name': _disp(self.index.entries[c][1])
+                if self.index.entries[c][0] == 'club' else 'National team'}
+               for c, _ in self.index.suggest(typed, 5)]
+        return {'canonical': None, 'display': typed, 'kind': None, 'how': None,
+                'league': None, 'suggest': sug}
 
+    # ------------------------------------------------------------- analysis
     def analyze_row(self, home: str, away: str, odds=None) -> dict:
         """Probabilities for one coupon row, where they came from, both club
         model versions, and name suggestions for anything unrecognised."""
         self.need_ready()
         home, away = str(home or '').strip(), str(away or '').strip()
         out = {'home': home, 'away': away, 'probs': None, 'src': 'none',
-               'v1': None, 'v2': None, 'market': None, 'league': None,
-               'league_name': '', 'known': {'home': None, 'away': None},
-               'suggest': {'home': [], 'away': []}}
+               'v1': None, 'v2': None, 'market': None, 'league': None, 'league_name': '',
+               'sides': {'home': None, 'away': None}}
         if not home or not away:
             return out
-        ic = toto._load_intl()
-        for side, name in (('home', home), ('away', away)):
-            out['known'][side] = self._known(name, ic)
-            if out['known'][side] is None:
-                out['suggest'][side] = toto.suggest_names(
-                    name, toto.all_known_names(self.ctx['team_to_league']), 5)
+        sh, sa = self._side(home), self._side(away)
+        out['sides'] = {'home': sh, 'away': sa}
+        ch, ca = sh['canonical'] or home, sa['canonical'] or away
         o = list(odds) if odds and len(odds) == 3 and all(x and float(x) > 1 for x in odds) else None
-        row = pd.Series({'home': home, 'away': away,
+        row = pd.Series({'home': ch, 'away': ca,
                          'o1': o[0] if o else None, 'ox': o[1] if o else None,
                          'o2': o[2] if o else None})
         ctx = dict(self.ctx)
         ctx['model_detail'] = {}
         with MODEL_LOCK:
             p, src, model = toto.match_probs(row, ctx)
-        det = ctx['model_detail'].get((home, away))
+        det = ctx['model_detail'].get((ch, ca))
         if det:
             out['v1'], out['v2'] = _hda(det['v1']), _hda(det['v2'])
             out['league'], out['league_name'] = det['league'], _disp(det['league'])
@@ -292,19 +335,12 @@ class Engine:
             if src in ('blend', 'odds'):
                 out['src'] = 'odds'
             elif src == 'model' and det:
-                out['src'] = 'feed' if det['feed_odds'] else det['version']
+                out['src'] = 'odds' if det['feed_odds'] else det['version']
             else:
                 out['src'] = src                         # euro / intl
         return out
 
     # --------------------------------------------------------------- tickets
-    @staticmethod
-    def effective_threshold(game: str, n_rows: int) -> int:
-        """The prize rule as a number of allowed misses (Spor Toto: 3 of 15),
-        so a coupon still being filled in previews the same tolerance."""
-        n, thr, _ = toto.GAMES[game]
-        return max(1, n_rows - (n - thr))
-
     @staticmethod
     def _tiers(probs, masks, threshold, top):
         qs = [float(sum(p[o] for o in range(3) if (m >> o) & 1)) for p, m in zip(probs, masks)]
@@ -312,43 +348,44 @@ class Engine:
         return ({str(k): float(d[k:].sum()) if k < len(d) else 0.0
                  for k in range(threshold, top + 1)}, float(sum(qs)))
 
+    @staticmethod
+    def threshold_for(n: int) -> int:
+        return max(1, n - ALLOWED_WRONG)
+
     def ticket(self, body: dict) -> dict:
-        game = body.get('game', 'turkish')
-        n, thr, top = toto.GAMES[game]
         probs = [np.asarray(p, float) for p in body['probs']]
         if not probs:
             return {'labels': [], 'masks': [], 'columns': 0}
-        thr_eff = self.effective_threshold(game, len(probs))
-        top_eff = len(probs)
+        n = len(probs)
+        thr = self.threshold_for(n)
         budget = max(1, int(body.get('budget', 1)))
         inv = {v: k for k, v in ticket_mod.MASK_LABEL.items()}
         fixed = {i: inv[l] for i, l in enumerate(body.get('locks') or []) if l in inv}
         crowd = body.get('crowd')
         use_crowd = (body.get('objective') == 'crowd' and crowd
-                     and len(crowd) == len(probs) and all(c and len(c) == 3 for c in crowd))
+                     and len(crowd) == n and all(c and len(c) == 3 for c in crowd))
         t0 = time.time()
-        r = ticket_mod.build(probs, thr_eff, budget,
+        r = ticket_mod.build(probs, thr, budget,
                              crowd=np.asarray(crowd, float) if use_crowd else None,
                              tilt=float(body.get('tilt', ticket_mod.DEFAULT_TILT)),
                              fixed=fixed, n_sims=12000, restarts=4)
-        tiers, exp = self._tiers(probs, r['masks'], thr_eff, top_eff)
+        tiers, exp = self._tiers(probs, r['masks'], thr, n)
         single = [1 << int(np.argmax(p)) for p in probs]
-        s_tiers, s_exp = self._tiers(probs, single, thr_eff, top_eff)
+        s_tiers, s_exp = self._tiers(probs, single, thr, n)
         return {'labels': r['labels'], 'masks': r['masks'], 'columns': r['columns'],
                 'budget': budget, 'objective': r['objective'],
                 'over_budget': r.get('over_budget', False),
-                'threshold': thr_eff, 'full_threshold': thr, 'tiers': tiers,
-                'p_prize': tiers[str(thr_eff)], 'expected': exp,
-                'single': {'p_prize': s_tiers[str(thr_eff)], 'expected': s_exp},
+                'threshold': thr, 'n': n, 'game': game_for(n), 'tiers': tiers,
+                'p_prize': tiers[str(thr)], 'expected': exp,
+                'single': {'p_prize': s_tiers[str(thr)], 'expected': s_exp},
                 'n_double': sum(1 for m in r['masks'] if ticket_mod.popcount(m) == 2),
                 'n_triple': sum(1 for m in r['masks'] if ticket_mod.popcount(m) == 3),
                 'ms': int((time.time() - t0) * 1000)}
 
     def ladder(self, body: dict) -> list[dict]:
         """What each extra doubling of the budget buys (hit objective)."""
-        game = body.get('game', 'turkish')
         probs = [np.sort(np.asarray(p, float))[::-1] for p in body['probs']]
-        thr = self.effective_threshold(game, len(probs))
+        thr = self.threshold_for(len(probs))
         out, prev = [], None
         for b in (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512):
             cov, cols, p = toto.optimize_system(probs, thr, b, restarts=3)
@@ -361,9 +398,8 @@ class Engine:
         return out
 
     def sweep(self, body: dict) -> list[dict]:
-        game = body.get('game', 'turkish')
         probs = [np.asarray(p, float) for p in body['probs']]
-        thr = self.effective_threshold(game, len(probs))
+        thr = self.threshold_for(len(probs))
         rows = ticket_mod.sweep(probs, thr, max(1, int(body.get('budget', 1))),
                                 np.asarray(body['crowd'], float), n_sims=20000)
         return [{'tilt': r['tilt'], 'p_hit': r['p_hit'], 'payout': r['vs_base'],
@@ -384,42 +420,106 @@ class Engine:
         return out
 
     # -------------------------------------------------------------- fixtures
-    def fixtures(self, days: int = 3) -> dict:
+    def start_fixtures(self, force: bool = False, refetch: bool = False) -> None:
+        """Price the next two weeks of the odds feed in the background. The
+        list is available immediately (teams, odds) and fills in as each match
+        is priced, so the page never waits on the models."""
+        if self.state != 'ready':
+            return
+        mode = predict_mod.get_model_mode()
+        with self._fx_lock:
+            fx = self.fx
+            if fx['state'] == 'loading':
+                return
+            fresh = (fx['state'] == 'ready' and fx['mode'] == mode
+                     and time.time() - (fx['loaded_at'] or 0) < FIXTURE_TTL)
+            if fresh and not force and not refetch:
+                return
+            self.fx = {'state': 'loading', 'done': 0, 'total': 0, 'rows': [], 'mode': mode,
+                       'loaded_at': None, 'error': None, 'started': time.time()}
+        threading.Thread(target=self._price_fixtures, args=(refetch,), daemon=True).start()
+
+    def _price_fixtures(self, refetch: bool) -> None:
+        fx = self.fx
+        try:
+            from scripts import fixtures as fx_mod
+            fx_mod.fetch(force=refetch)
+            feed = fx_mod.load(fetch_if_missing=False)
+            now = pd.Timestamp.now().normalize()
+            feed = feed[(feed['Date'] >= now) & (feed['Date'] <= now + pd.Timedelta(days=FIXTURE_DAYS))]
+            feed = feed.dropna(subset=['league', 'HomeTeam', 'AwayTeam', 'Date'])
+            feed = feed.drop_duplicates(['league', 'Date', 'HomeTeam', 'AwayTeam'])
+            feed = feed.sort_values(['Date', 'Time', 'league', 'HomeTeam'], na_position='last')
+            idx = self.index
+            base = []
+            for k, m in enumerate(feed.to_dict('records')):
+                odds = [m['OddsH'], m['OddsD'], m['OddsA']]
+                odds = [float(x) for x in odds] if all(pd.notna(x) and x > 1 for x in odds) else None
+                market = [float(x) for x in toto._devig(*odds)] if odds else None
+                home, away, lg = m['HomeTeam'], m['AwayTeam'], m['league']
+                base.append({
+                    'id': f'{lg}|{m["Date"].date()}|{home}|{away}', 'date': str(m['Date'].date()),
+                    'time': (str(m['Time']) if pd.notna(m.get('Time')) else None),
+                    'league': lg, 'league_name': _disp(lg),
+                    'home': home, 'away': away,
+                    'home_display': idx.display_of.get(home, home), 'away_display': idx.display_of.get(away, away),
+                    'odds': odds, 'market': market, 'probs': market, 'src': 'odds' if market else None,
+                    'v1': None, 'v2': None, 'ou25': None, 'btts': None, 'goals_v1': None, 'goals_v2': None,
+                    'pending': True})
+            fx['rows'] = base
+            fx['total'] = len(base)
+            try:                                       # build league states in parallel first
+                from scripts import v2_bundle
+                v2_bundle.warm(sorted({r['league'] for r in base}))
+            except Exception:
+                traceback.print_exc()
+            c = self.ctx
+            for i, r in enumerate(base):
+                new = dict(r, pending=False)
+                try:
+                    with MODEL_LOCK:
+                        pred = predict_mod.predict_match(
+                            r['home'], r['away'], c['team_stats'], c['team_to_league'], c['hist'],
+                            include_xg=False, prediction_date=pd.Timestamp(r['date']))
+                    new['v1'], new['v2'] = _hda(pred.get('1x2_v1')), _hda(pred.get('1x2_v2'))
+                    g1, g2 = pred.get('goals_v1') or {}, pred.get('goals_v2') or {}
+                    new['goals_v1'] = {'ou25': (g1.get('ou25') or {}).get('over'), 'btts': (g1.get('btts') or {}).get('yes')}
+                    new['goals_v2'] = {'ou25': (g2.get('ou25') or {}).get('over'), 'btts': (g2.get('btts') or {}).get('yes')} if g2 else None
+                    if 'ou25' in pred:
+                        new['ou25'] = pred['ou25']['over']
+                    if 'btts' in pred:
+                        new['btts'] = pred['btts']['yes']
+                    new['model_version'] = pred.get('model_version')
+                    if not new['market']:
+                        used = _hda(pred.get('1x2'))
+                        new['probs'], new['src'] = used, (pred.get('model_version') or 'v1')
+                except Exception:
+                    pass                                # leaves the odds-only row
+                fx['rows'][i] = new
+                fx['done'] = i + 1
+            fx['loaded_at'] = time.time()
+            fx['state'] = 'ready'
+        except Exception as e:
+            fx['state'], fx['error'] = 'error', f'{type(e).__name__}: {e}'
+            traceback.print_exc()
+
+    def fixtures(self, refresh: bool = False) -> dict:
         self.need_ready()
-        key = (days, predict_mod.get_model_mode())
-        hit = self._fixtures_cache.get(key)
-        if hit and time.time() - hit[0] < 600:
-            return hit[1]
-        from scripts import today as today_mod
-        with MODEL_LOCK:
-            rows = today_mod.club_section(days, self.ctx['hist'], self.ctx['team_stats'],
-                                          self.ctx['team_to_league'])
-        out = []
-        for r in rows:
-            out.append({
-                'date': str(r['Date']), 'league': r['_league'], 'league_name': r['League'],
-                'home': r['Home'], 'away': r['Away'],
-                'v1': list(r['_v1']) if r.get('_v1') else None,
-                'v2': list(r['_v2']) if r.get('_v2') else None,
-                'market': list(r['_mkt']) if r.get('_mkt') else None,
-                'odds': [float(x) for x in r['Odds(1/X/2)'].split('/')] if r.get('Odds(1/X/2)') else None,
-                'goals_v1': r.get('_g1'), 'goals_v2': r.get('_g2'),
-                'ou25': r.get('P(O2.5)'), 'btts': r.get('P(BTTS)'),
-            })
-        res = {'fixtures': out, 'mode': predict_mod.get_model_mode(),
-               'loaded_at': pd.Timestamp.now().isoformat(timespec='seconds')}
-        self._fixtures_cache[key] = (time.time(), res)
-        return res
+        self.start_fixtures(refetch=refresh)
+        fx = self.fx
+        return {'state': fx['state'], 'done': fx['done'], 'total': fx['total'],
+                'rows': list(fx['rows']), 'mode': fx['mode'], 'error': fx.get('error'),
+                'loaded_at': fx['loaded_at']}
 
     # ----------------------------------------------------------------- match
     def match(self, home: str, away: str) -> dict:
         """Full card for any pair: club model (both versions + goals) when the
         clubs share a league, else the European / national fallback."""
         self.need_ready()
+        sh, sa = self._side(home), self._side(away)
+        h, a = sh['canonical'], sa['canonical']
         t2l = self.ctx['team_to_league']
-        h = toto._fuzzy(home, self.ctx['teams'])
-        a = toto._fuzzy(away, self.ctx['teams'])
-        if h and a and t2l.get(h) == t2l.get(a):
+        if h and a and sh['kind'] == 'club' and sa['kind'] == 'club' and t2l.get(h) == t2l.get(a):
             with MODEL_LOCK:
                 p = predict_mod.predict_match(h, a, self.ctx['team_stats'], t2l,
                                               self.ctx['hist'], include_xg=True,
@@ -435,7 +535,8 @@ class Engine:
                 return {'ou15': g.get('ou15', {}).get('over'), 'ou25': g.get('ou25', {}).get('over'),
                         'ou35': g.get('ou35', {}).get('over'), 'btts': g.get('btts', {}).get('yes'),
                         'xg': [g['xg']['home'], g['xg']['away']] if g.get('xg') else None}
-            return {'kind': 'club', 'home': h, 'away': a, 'league': lg, 'league_name': _disp(lg),
+            return {'kind': 'club', 'home': h, 'away': a, 'home_display': sh['display'],
+                    'away_display': sa['display'], 'league': lg, 'league_name': _disp(lg),
                     'data_age_days': age,
                     'used': _hda(p.get('1x2')), 'model_version': p.get('model_version'),
                     'goals_version': p.get('goals_version'),
@@ -446,33 +547,9 @@ class Engine:
                     'goals_v1': goals(p.get('goals_v1')), 'goals_v2': goals(p.get('goals_v2')),
                     'ou25_odds': (mk or {}).get('ou25_odds')}
         r = self.analyze_row(home, away)
-        return {'kind': r['src'], 'home': home, 'away': away, 'used': r['probs'],
-                'known': r['known'], 'suggest': r['suggest'], 'league_name': r['league_name']}
-
-    # --------------------------------------------------------- internationals
-    def internationals(self, days: int = 14) -> dict:
-        self.need_ready()
-        from scripts import international as intl
-        rows = []
-        try:
-            fx = pd.read_csv(intl.WC_FIXTURES_FILE, parse_dates=['date'])
-        except (OSError, ValueError):
-            fx = pd.DataFrame()
-        if not fx.empty:
-            now = pd.Timestamp.now().normalize()
-            fx = fx[(fx['date'] >= now) & (fx['date'] <= now + pd.Timedelta(days=days))]
-            ic = toto._load_intl()
-            for _, m in fx.sort_values('date').iterrows():
-                hm, aw = m['home_team'], m['away_team']
-                if hm not in ic['ratings'] or aw not in ic['ratings']:
-                    continue
-                pr = ic['model'].market_probs(ic['ratings'][hm], ic['ratings'][aw],
-                                              neutral=bool(m.get('neutral', False)))
-                rows.append({'date': str(m['date'].date()), 'home': hm, 'away': aw,
-                             'tournament': m.get('tournament', ''),
-                             'probs': [pr['p_home'], pr['p_draw'], pr['p_away']],
-                             'ou25': pr.get('p_over25'), 'btts': pr.get('p_btts')})
-        return {'fixtures': rows, 'results_through': str(intl.load_results()['date'].max().date())}
+        return {'kind': r['src'], 'home': home, 'away': away,
+                'home_display': sh['display'], 'away_display': sa['display'],
+                'used': r['probs'], 'sides': r['sides'], 'league_name': r['league_name']}
 
     # --------------------------------------------------------------- history
     def history(self) -> dict:
@@ -486,6 +563,8 @@ class Engine:
                                               'p_threshold', 'columns', 'n', 'graded',
                                               'correct', 'expected', 'complete')},
                         'note': e.get('note', ''), 'kind': e.get('kind', ''),
+                        'label': game_for(g['n'])['label'] or f"{g['n']} matches",
+                        'flag': game_for(g['n'])['flag'],
                         'rows': [{'home': r['home'], 'away': r['away'], 'pick': r.get('pick'),
                                   'actual': r.get('actual'), 'ok': r.get('ok'),
                                   'p': [r.get('p1'), r.get('px'), r.get('p2')]}
@@ -499,13 +578,12 @@ class Engine:
 
     def save_history(self, body: dict) -> dict:
         from scripts import track
-        game = body['game']
-        _, thr, _ = toto.GAMES[game]
+        n = len(body['matches'])
         matches = [{'home': m['home'], 'away': m['away'], 'p1': m['probs'][0],
                     'px': m['probs'][1], 'p2': m['probs'][2], 'pick': m['pick'],
                     'src': m.get('src')} for m in body['matches']]
-        e = track.save_coupon(game, matches, budget=int(body.get('budget', 1)),
-                              threshold=thr, p_threshold=float(body['p_prize']),
+        e = track.save_coupon(game_for(n)['key'], matches, budget=int(body.get('budget', 1)),
+                              threshold=self.threshold_for(n), p_threshold=float(body['p_prize']),
                               note=body.get('note', ''), columns=int(body['columns']),
                               kind=body.get('kind', 'ticket'))
         return {'ok': True, 'id': e['id']}
