@@ -109,6 +109,46 @@ v2 is trained "as of" the same date.
 Market ratings: Elo-style update, k=260, season carry-over 0.9, home
 advantage 60 (`research_features.MKT_*`, version `causal-day-state-v1+mkt3`).
 
+## Best model for each task (2026-10-09)
+
+The app no longer offers a choice between models. `scripts/predictor.py`
+uses the best measured model for each task, all on matches the models had not
+seen (weekly block bootstrap, 95% intervals):
+
+| Task | Used | Evidence |
+|---|---|---|
+| Result 1 · X · 2 | Bookmaker odds if present, else the v2 ensemble | v2 beats v1 by +0.030 log-loss (3,998 matches); the odds beat v2 by about 0.005 (not blendable: the best weight on the model is 0) |
+| Over / under 1.5 · 2.5 · 3.5 | v2 scoreline model; pooled with the over/under odds when present | +0.006 / +0.009 / +0.009 over v1 (CIs above zero); pooled with odds it ties the market on 2024–26 |
+| Both teams score | v2 scoreline model | +0.0035 over v1 [−0.0002, +0.0068]; a direct classifier did no better (+0.0003 n.s.) |
+| Correct score | v2 scoreline grid, adjusted to the final 1X2 and over/under | see below |
+
+### Correct score (33,101 matches, 2024-01 to 2026-09)
+
+Log-loss of the actual score (lower is better) and how often the most likely
+score was right:
+
+| Model | Log-loss | Top-1 | Top-3 |
+|---|---|---|---|
+| League score frequencies (no information) | 3.0063 | 12.1% | 31.1% |
+| v2 scoreline grid | 2.8960 | 12.9% | 33.7% |
+| grid adjusted to the 1X2 model | 2.8937 | 12.8% | 33.9% |
+| grid adjusted to the market (odds, over/under), where odds exist | 2.8917 | 12.8% | 33.7% |
+
+- The grid beats the no-information baseline by +0.110 [+0.105, +0.115].
+- Adjusting it to the final 1X2 adds +0.0024 [+0.0016, +0.0031]; to the
+  market it adds +0.0043 [+0.0030, +0.0056] (+0.0070 on matches with odds).
+- Read as BTTS or over/under, the adjusted grid is as good as the plain one
+  (BTTS 0.68498 vs 0.68491; over 2.5 0.67895 vs 0.67925, better with odds
+  at 0.67665), so one joint distribution serves all four tasks.
+- Honest limit: an exact score is hard. The best single guess is right about
+  13 times in 100 (12.1% without any information). The top three guesses are
+  right about 34 times in 100.
+- On all 326 fixtures priced on 2026-10-09 the adjusted grid matched its
+  target numbers to 1e-9 (`fit_error` in the predictor output).
+
+`python -m scripts.v2_goals score` reruns this; `reports/v2/score_eval.json`
+holds the numbers.
+
 ## Goals model (`scripts/v2_goals.py`, bundle `models/v2/2026-09-30_goals_poisson_tuned/`)
 
 - **What it is:** two Poisson rate models (home goals, away goals) on the

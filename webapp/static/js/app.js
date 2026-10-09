@@ -135,7 +135,15 @@ function paintPop() {
     m.ok ? h('div', { class: 'small muted', style: { marginTop: '8px' } }, `Models trained to ${m.trained_through}.`) : '',
     h('h4', {}, 'Appearance'),
     h('div', { class: 'row' }, h('span', { class: 'small' }, 'Theme'), themeSel),
-    h('div', { class: 'small faint', style: { marginTop: '14px' } }, `Version ${s.version}`));
+    h('div', { class: 'row', style: { marginTop: '14px' } },
+      h('span', { class: 'small faint' }, `Version ${s.version}`), h('span', { class: 'spacer' }),
+      h('button', { class: 'btn sm', onclick: quitApp }, 'Quit the program')));
+}
+
+async function quitApp() {
+  try { await api.post('/api/quit'); } catch { /* the program closes the connection */ }
+  document.body.replaceChildren(h('div', { class: 'boot' }, h('div', { id: 'boot-step' }, 'The program has stopped.'),
+    h('div', { class: 'muted small' }, 'You can close this tab. Open the app again to continue.')));
 }
 
 async function runUpdate(log) {

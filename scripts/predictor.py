@@ -215,6 +215,11 @@ class Predictor:
         tilted = v2_goals.tilt_grid(grid, p1x2=final[None, :],
                                     ou25=np.array([ou_final]) if ou_src == 'odds' else None)
         m = v2_goals.grid_markets(tilted)
+        # how exactly the grid ended up on the numbers it was asked to match
+        # (zero unless the 1X2 and over/under numbers contradict each other)
+        miss = np.abs(np.array([m['pH'][0], m['pD'][0], m['pA'][0]]) - final).max()
+        if ou_src == 'odds':
+            miss = max(miss, abs(float(m['ou25'][0]) - ou_final))
         g = tilted[0]
         flat = g.ravel()
         order = np.argsort(-flat)[:6]
@@ -230,7 +235,7 @@ class Predictor:
             'market_1x2': [float(x) for x in mk] if mk is not None else None,
             'odds': [float(x) for x in o] if mk is not None else None,
             'ou': {'1.5': float(m['ou15'][0]), '2.5': float(m['ou25'][0]), '3.5': float(m['ou35'][0])},
-            'ou_src': ou_src, 'ou25_model': raw_ou, 'ou25_market': ou_mkt,
+            'ou_src': ou_src, 'ou25_model': raw_ou, 'ou25_market': ou_mkt, 'fit_error': float(miss),
             'btts': float(m['btts'][0]),
             'xg': [float(m['xg_h'][0]), float(m['xg_a'][0])],
             'scores': scores,

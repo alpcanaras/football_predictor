@@ -560,10 +560,10 @@ def check_app() -> None:
 
 
 def check_webapp() -> None:
-    """The web app's API end to end: boots, prices every kind of coupon row,
-    resolves real-world team names, builds a ticket around a locked pick and
-    names the game from the coupon's size, round-trips the coupon — all against
-    a scratch coupon directory, never the real one."""
+    """The web app's API end to end, on the single predictor: boots, prices
+    every kind of coupon row, resolves real-world team names, builds a ticket
+    around a locked pick and names the game from the coupon's size, and
+    round-trips the coupon — all against a scratch coupon directory."""
     try:
         from starlette.testclient import TestClient
     except Exception as e:
@@ -583,8 +583,8 @@ def check_webapp() -> None:
             eng_mod.ENGINE.load()
             problems = []
             st = client.get('/api/status').json()
-            if st.get('state') != 'ready' or st.get('model_mode') != 'v2':
-                problems.append(f"status {st.get('state')}/{st.get('model_mode')}")
+            if st.get('state') != 'ready' or not (st.get('models') or {}).get('ok'):
+                problems.append(f"status {st.get('state')}/{st.get('models')}")
             if 'Football Predictor' not in client.get('/').text:
                 problems.append('index page')
             rows = [('Galatasaray', 'Fenerbahce', None), ('Bayern Munich', 'Dortmund', [1.5, 4.6, 6.0]),
@@ -593,14 +593,14 @@ def check_webapp() -> None:
             got = [client.post('/api/analyze', json={'home': h, 'away': a, 'odds': o}).json()
                    for h, a, o in rows]
             src = [g.get('src') for g in got]
-            if src[0] not in ('v1', 'v2', 'odds') or not (got[0].get('v1') and got[0].get('v2')):
+            if src[0] != 'model' or got[0].get('score') is None or got[0].get('ou25') is None:
                 problems.append(f'club row {src[0]}')
             if src[1] != 'odds':
                 problems.append(f'odds row {src[1]}')
-            if src[2] != 'intl':
+            if src[2] != 'nations':
                 problems.append(f'national row {src[2]}')
-            if got[3]['sides']['home']['canonical'] != 'Buyuksehyr':
-                problems.append('Başakşehir not matched to the data name')
+            if got[3]['sides']['home']['canonical'] != 'Buyuksehyr' or src[3] != 'club elo':
+                problems.append('cross-league pair / Başakşehir')
             if got[4]['sides']['home']['how'] != 'fuzzy' or got[4]['sides']['home']['canonical'] != 'Fenerbahce':
                 problems.append('typo not flagged as a guess')
             if src[5] != 'none' or got[5]['sides']['home']['canonical'] is not None:
@@ -617,6 +617,9 @@ def check_webapp() -> None:
             if (t13.get('game', {}).get('label'), t13.get('threshold')) != ('13er Wette', 10) \
                     or (t15.get('game', {}).get('label'), t15.get('threshold')) != ('Spor Toto', 12):
                 problems.append(f"game by size: {t13.get('game')} / {t15.get('game')}")
+            m = client.post('/api/match', json={'home': 'Galatasaray', 'away': 'Fenerbahce'}).json()
+            if not m.get('ok') or len(m.get('scores', [])) < 5 or not (0 < m['ou']['1.5'] and m['ou']['1.5'] > m['ou']['2.5'] > m['ou']['3.5']):
+                problems.append('match card')
             body = {'rows': [{'home': 'Norway', 'away': 'Italy', 'odds': [2.1, 3.3, 3.4],
                               'crowd': [40, 30, 30], 'lock': '1X'}], 'budget': 8}
             client.put('/api/coupon', json=body)
@@ -628,13 +631,41 @@ def check_webapp() -> None:
             if not any(x['name'] == 'Buyuksehyr' and 'basaksehir' in x['keys'] for x in teams):
                 problems.append('team list lacks aliases')
             record(PASS if not problems else FAIL, 'web app API',
-                   'boots on v2, prices club/odds/nations rows, matches real-world names, '
-                   'locked ticket, game named by coupon size, coupon round-trip'
+                   'boots, prices club/odds/nations/cross-league rows, real-world names, locked ticket, '
+                   'game named by size, match card, coupon round-trip'
                    if not problems else '; '.join(problems))
         except Exception as e:
             record(FAIL, 'web app API', f'{type(e).__name__}: {e}')
         finally:
             os.environ.pop('FOOTBALL_PREDICTOR_TOTO_DIR', None)
+
+
+def check_predictor() -> None:
+    """One predictor, one joint distribution: every market read from the same
+    scoreline grid, so the numbers cannot disagree; odds, when given, win."""
+    try:
+        from scripts import predictor
+        P = predictor.Predictor()
+        r = P.predict('Galatasaray', 'Fenerbahce')
+        problems = []
+        g = np.array(r['grid'])
+        if abs(g.sum() + r['grid_rest'] - 1) > 1e-6 or abs(sum(r['p1x2']) - 1) > 1e-6:
+            problems.append('probabilities do not sum to 1')
+        if not (r['ou']['1.5'] > r['ou']['2.5'] > r['ou']['3.5']):
+            problems.append('over/under lines out of order')
+        i, j = np.indices(g.shape)
+        full = 1 - r['grid_rest']
+        if abs((g[i > j].sum() + 0) - r['p1x2'][0]) > r['grid_rest'] + 1e-6:
+            problems.append('score grid disagrees with the home-win number')
+        o = P.predict('Galatasaray', 'Fenerbahce', odds=[1.5, 4.0, 7.0], ou_odds=[1.7, 2.1])
+        if o['src'] != 'odds' or abs(o['p1x2'][0] - o['market_1x2'][0]) > 1e-9 or o['ou_src'] != 'odds':
+            problems.append('odds are not used when given')
+        if not P.predict('Turkey', 'France')['ok'] or not P.predict('Galatasaray', 'Real Madrid')['ok']:
+            problems.append('fallback pairs')
+        record(PASS if not problems else FAIL, 'single predictor',
+               f"{len(P.clubs)} clubs, models {P.info()['1x2']} / {P.info()['goals']}" if not problems else '; '.join(problems))
+    except Exception as e:
+        record(FAIL, 'single predictor', f'{type(e).__name__}: {e}')
 
 
 def check_names() -> None:
@@ -683,6 +714,7 @@ def main() -> int:
     check_toto_math()
     check_name_resolution()
     check_names()
+    check_predictor()
     check_euro_clubs()
     check_ticket_engine()
     check_ticket_grading()
