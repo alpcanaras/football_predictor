@@ -561,7 +561,8 @@ def check_app() -> None:
 
 def check_webapp() -> None:
     """The web app's API end to end: boots, prices every kind of coupon row,
-    builds a ticket around a locked pick, round-trips a coupon — all against
+    resolves real-world team names, builds a ticket around a locked pick and
+    names the game from the coupon's size, round-trips the coupon — all against
     a scratch coupon directory, never the real one."""
     try:
         from starlette.testclient import TestClient
@@ -572,6 +573,8 @@ def check_webapp() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         os.environ['FOOTBALL_PREDICTOR_TOTO_DIR'] = tmp
         try:
+            from scripts import names as names_mod
+            names_mod = importlib.reload(names_mod)
             from webapp import engine as eng_mod
             eng_mod = importlib.reload(eng_mod)          # read the scratch dir
             from webapp import server
@@ -579,42 +582,86 @@ def check_webapp() -> None:
             client = TestClient(server.create_app(start_engine=False))
             eng_mod.ENGINE.load()
             problems = []
-            if client.get('/api/status').json().get('state') != 'ready':
-                problems.append('not ready')
+            st = client.get('/api/status').json()
+            if st.get('state') != 'ready' or st.get('model_mode') != 'v2':
+                problems.append(f"status {st.get('state')}/{st.get('model_mode')}")
             if 'Football Predictor' not in client.get('/').text:
                 problems.append('index page')
             rows = [('Galatasaray', 'Fenerbahce', None), ('Bayern Munich', 'Dortmund', [1.5, 4.6, 6.0]),
-                    ('Turkey', 'France', None), ('Fenerbache', 'Besiktas', None)]
+                    ('Turkey', 'France', None), ('Başakşehir', 'VfL Wolfsburg', None),
+                    ('Fenerbache', 'Besiktas', None), ('Zzzz FC', 'Galatasaray', None)]
             got = [client.post('/api/analyze', json={'home': h, 'away': a, 'odds': o}).json()
                    for h, a, o in rows]
             src = [g.get('src') for g in got]
-            if src[0] not in ('v1', 'v2', 'feed') or not (got[0].get('v1') and got[0].get('v2')):
+            if src[0] not in ('v1', 'v2', 'odds') or not (got[0].get('v1') and got[0].get('v2')):
                 problems.append(f'club row {src[0]}')
             if src[1] != 'odds':
                 problems.append(f'odds row {src[1]}')
             if src[2] != 'intl':
                 problems.append(f'national row {src[2]}')
-            if src[3] != 'none' or 'Fenerbahce' not in got[3]['suggest']['home']:
-                problems.append('unknown name not flagged with a suggestion')
+            if got[3]['sides']['home']['canonical'] != 'Buyuksehyr':
+                problems.append('Başakşehir not matched to the data name')
+            if got[4]['sides']['home']['how'] != 'fuzzy' or got[4]['sides']['home']['canonical'] != 'Fenerbahce':
+                problems.append('typo not flagged as a guess')
+            if src[5] != 'none' or got[5]['sides']['home']['canonical'] is not None:
+                problems.append('unknown name not flagged')
             probs = [g['probs'] for g in got[:3]]
-            t = client.post('/api/ticket', json={'game': 'german', 'probs': probs, 'budget': 4,
+            t = client.post('/api/ticket', json={'probs': probs, 'budget': 4,
                                                  'locks': [None, 'X2', None]}).json()
             if t.get('labels', [None, None])[1] != 'X2' or t.get('columns', 99) > 4:
                 problems.append(f'locked ticket {t.get("labels")}')
+            if t.get('threshold') != 1 or t.get('game', {}).get('complete'):
+                problems.append('3-match preview rule')
+            t13 = client.post('/api/ticket', json={'probs': probs * 4 + probs[:1], 'budget': 1}).json()
+            t15 = client.post('/api/ticket', json={'probs': probs * 5, 'budget': 1}).json()
+            if (t13.get('game', {}).get('label'), t13.get('threshold')) != ('13er Wette', 10) \
+                    or (t15.get('game', {}).get('label'), t15.get('threshold')) != ('Spor Toto', 12):
+                problems.append(f"game by size: {t13.get('game')} / {t15.get('game')}")
             body = {'rows': [{'home': 'Norway', 'away': 'Italy', 'odds': [2.1, 3.3, 3.4],
                               'crowd': [40, 30, 30], 'lock': '1X'}], 'budget': 8}
-            client.put('/api/coupon/german', json=body)
-            back = client.get('/api/coupon/german').json()
+            client.put('/api/coupon', json=body)
+            back = client.get('/api/coupon').json()
             r0 = (back.get('rows') or [{}])[0]
             if (r0.get('lock'), r0.get('crowd'), back.get('budget')) != ('1X', [40.0, 30.0, 30.0], 8):
                 problems.append('coupon round-trip')
+            teams = client.get('/api/teams').json()['teams']
+            if not any(x['name'] == 'Buyuksehyr' and 'basaksehir' in x['keys'] for x in teams):
+                problems.append('team list lacks aliases')
             record(PASS if not problems else FAIL, 'web app API',
-                   'boots, prices club/odds/nations/unknown rows, locked ticket, coupon round-trip'
+                   'boots on v2, prices club/odds/nations rows, matches real-world names, '
+                   'locked ticket, game named by coupon size, coupon round-trip'
                    if not problems else '; '.join(problems))
         except Exception as e:
             record(FAIL, 'web app API', f'{type(e).__name__}: {e}')
         finally:
             os.environ.pop('FOOTBALL_PREDICTOR_TOTO_DIR', None)
+
+
+def check_names() -> None:
+    """Every curated alias points at a real team name in the data, and no
+    alias is claimed by two teams — a typo here would silently match nothing."""
+    try:
+        import pandas as pd
+        from scripts import names, toto
+        d = pd.read_csv(config.PROCESSED_DATA_FILE, usecols=['league', 'HomeTeam', 'AwayTeam'],
+                        low_memory=False)
+        clubs = {}
+        for lg, h, a in zip(d.league, d.HomeTeam, d.AwayTeam):
+            clubs.setdefault(h, lg)
+            clubs.setdefault(a, lg)
+        idx = names.NameIndex(clubs, sorted(toto._load_intl()['ratings']))
+        bad = [k for k in names.TEAMS if k not in idx.clubs]
+        bad += [k for k in names.NATIONS if k not in set(idx.nations)]
+        clash = [k for k, v in idx._alias.items() if len(v) > 1]
+        checks = {'Basaksehir': 'Buyuksehyr', 'VfL Wolfsburg': 'Wolfsburg',
+                  'Bayern München': 'Bayern Munich', 'Man Utd': 'Man United'}
+        miss = [q for q, c in checks.items() if not idx.resolve(q) or idx.resolve(q).canonical != c]
+        ok = not (bad or clash or miss)
+        record(PASS if ok else FAIL, 'team-name matcher',
+               f'{len(names.TEAMS)} clubs + {len(names.NATIONS)} nations curated, all real'
+               if ok else f'unknown keys {bad}, clashing aliases {clash}, mismatches {miss}')
+    except Exception as e:
+        record(FAIL, 'team-name matcher', f'{type(e).__name__}: {e}')
 
 
 def main() -> int:
@@ -635,6 +682,7 @@ def main() -> int:
     check_season_coverage()
     check_toto_math()
     check_name_resolution()
+    check_names()
     check_euro_clubs()
     check_ticket_engine()
     check_ticket_grading()

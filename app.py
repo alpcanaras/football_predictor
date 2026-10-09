@@ -33,6 +33,9 @@ from scripts import toto
 
 st.set_page_config(page_title="Football Predictor", page_icon="⚽", layout="wide")
 
+st.warning("**This is the classic Streamlit app.** The new, faster one is the default now: "
+           "double-click `run.command` (or run `python -m webapp`). Streamlit stays only as a fallback.")
+
 # Saved coupons live here. Overridable so tests (and any throwaway session)
 # can point at a scratch directory instead of clobbering real coupons.
 COUPON_DIR = os.environ.get(

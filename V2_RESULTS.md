@@ -1,13 +1,23 @@
 # V2 models — results (2026-09-30)
 
-**Status (2026-09-30): v2 serves the Turkish 1X2; everything else is still
-v1 by default.** The app has a model switch in its sidebar:
+**Status (2026-10-09): v2 is the default model** (v1 stays available, is
+shown next to v2 on every match, and is used wherever v2 has no history for a
+fixture's teams). The model switch has three settings:
 
-| mode | 1X2 served from |
+| mode | 1X2 and goal markets served from |
 |---|---|
-| **Auto** (default) | v2 for the Turkish Süper Lig, v1 everywhere else |
+| **v2** (default) | the frozen v2 bundles everywhere |
+| **Auto** | v2 for the Turkish Süper Lig, v1 everywhere else |
 | **v1** | the production models (`models/tier1/`) everywhere |
-| **v2** | the frozen v2 bundle everywhere |
+
+Why v2 everywhere: on matches neither had seen it beat v1 by +0.030 log-loss
+(3,998 matches since 2026-03-24, CI above zero) and was better in 33 of 38
+leagues; the 5 leagues where it was slightly behind (Scottish Championship,
+Spanish La Liga, MLS, Irish and Russian) are all within noise. A post-freeze
+check on matches played after the bundle was fixed (29 Sep – 9 Oct, only 93
+so far because of the international break) points the same way (+0.05) but is
+far too small to count yet: `python -m scripts.v2_compare --since 2026-09-29`
+reruns it as the weeks pass.
 
 With bookmaker odds, every mode uses the market. The Match, Fixtures and
 Toto tabs show v1 and v2 side by side. The switch covers the 1X2 and the

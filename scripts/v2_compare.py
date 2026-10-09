@@ -181,12 +181,43 @@ def report(j: pd.DataFrame, prod_cols, label: str) -> dict:
     return out
 
 
+def post_freeze(since: str, tag: str | None = None) -> dict:
+    """The frozen bundle vs production on matches played since `since` — the
+    cleanest test there is: the bundle was fixed before any of them kicked
+    off, and production's models are older still. Features come from the
+    causal replay (as of each match's day), exactly as in live use."""
+    from scripts import v2_bundle
+    model, meta = v2_bundle.load_bundle(tag)
+    frame = v2_bundle.fresh_cache(meta.get('feature_set', 'v1'))
+    test = frame[frame.Date >= pd.Timestamp(since)].copy()
+    test['y'] = v2.labels(test)
+    test[['pA', 'pD', 'pH']] = model.predict_proba(test)
+    test[['mA', 'mD', 'mH']] = market_probs(test)
+    test['Date'] = pd.to_datetime(test['Date']).dt.normalize()
+    prod = production_pool()
+    j = test[KEY + ['y', 'pA', 'pD', 'pH', 'mA', 'mD', 'mH']].merge(
+        prod[prod.full_oos], on=KEY, how='inner')
+    print(f"  bundle {meta['tag']} (trained through {meta['trained_through']}); "
+          f"matches played {since} .. {j.Date.max().date()}")
+    res = {'bundle': meta['tag'], 'since': since}
+    res['served'] = report(j, ['pfA', 'pfD', 'pfH'], 'v2 vs the production model as served')
+    res['per_league'] = report(j, ['plA', 'plD', 'plH'], 'v2 vs the per-league production models')
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[1])
+    ap.add_argument('--since', help='post-freeze test: matches played since this date, '
+                                    'scored with the latest frozen bundle')
     ap.add_argument('--recipe', help='JSON recipe (default: distilled baseline)')
     ap.add_argument('--features', default='v1', choices=v2.FEATURE_SETS,
                     help='feature set for the default recipe')
     args = ap.parse_args()
+    if args.since:
+        out = post_freeze(args.since)
+        with open(os.path.join(v2.REPORT_DIR, 'post_freeze.json'), 'w') as f:
+            json.dump(out, f, indent=2, default=str)
+        return
     if args.recipe:
         with open(args.recipe) as f:
             recipe = json.load(f)

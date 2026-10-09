@@ -58,12 +58,15 @@ def _ensemble_predict(models, X):
 # models/v2, see V2_RESULTS.md). Only the 1X2 market has a v2 model.
 # =============================================================================
 MODEL_MODES = ('auto', 'v1', 'v2')
-# 'auto' serves v2 where v1 is known to be broken out of sample: the Turkish
+# Default 'v2' (decided 2026-10-09): v2 beat v1 on every out-of-sample test —
+# +0.030 log-loss on 3,998 matches v1 had not seen, better in 33 of 38 leagues
+# — and wherever v2 cannot serve a fixture (a team it has no history for) the
+# v1 prediction is used. 'auto' serves v2 where v1 is known to be broken: the Turkish
 # per-league models are overfit (0.67 log-loss on a season they trained on,
 # 1.25 on the unseen 2026/27 matches — worse than 1/3-1/3-1/3), while v2
 # scored 1.03 on those same matches.
 V2_AUTO_LEAGUES = {'turkish'}
-_MODEL_MODE = os.environ.get('FOOTBALL_PREDICTOR_MODEL', 'auto')
+_MODEL_MODE = os.environ.get('FOOTBALL_PREDICTOR_MODEL', 'v2')
 
 
 def set_model_mode(mode: str) -> None:

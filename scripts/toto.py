@@ -165,7 +165,17 @@ def _fuzzy(name, teams):
     if hits:
         return hits[0]
     hits = [t for t in teams if low and (low in _fold(t) or _fold(t) in low)]
-    return hits[0] if len(hits) == 1 else None
+    if len(hits) == 1:
+        return hits[0]
+    # curated aliases, club-type words ("VfL Wolfsburg") and remembered picks
+    try:
+        from scripts import names
+        m = names.club_index(teams).resolve(name, fuzzy=False)
+        if m and m.kind == 'club':
+            return m.canonical
+    except Exception:
+        pass
+    return None
 
 
 def suggest_names(name, candidates, limit=5):
@@ -180,6 +190,14 @@ def suggest_names(name, candidates, limit=5):
     low = _fold(apply_alias(name))
     if not low:
         return []
+    try:                                   # the matcher knows aliases and full names
+        from scripts import names
+        idx = names.NameIndex(set(candidates))
+        ranked = [c for c, _ in idx.suggest(name, limit)]
+        if ranked:
+            return ranked
+    except Exception:
+        pass
     folded = {}
     for t in candidates:
         folded.setdefault(_fold(t), t)

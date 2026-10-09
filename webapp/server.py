@@ -85,12 +85,16 @@ def teams(_r, _b):
     return {'teams': ENGINE.teams}
 
 
-def get_coupon(r, _b):
-    return ENGINE.load_coupon(r.path_params['game'])
+def get_coupon(_r, _b):
+    return ENGINE.load_coupon()
 
 
-def put_coupon(r, b):
-    return ENGINE.save_coupon(r.path_params['game'], b)
+def put_coupon(_r, b):
+    return ENGINE.save_coupon(b)
+
+
+def legacy(_r, _b):
+    return ENGINE.legacy()
 
 
 def parse(_r, b):
@@ -99,11 +103,6 @@ def parse(_r, b):
 
 def analyze(_r, b):
     return ENGINE.analyze_row(b.get('home'), b.get('away'), b.get('odds'))
-
-
-def analyze_many(_r, b):
-    return {'rows': [ENGINE.analyze_row(x.get('home'), x.get('away'), x.get('odds'))
-                     for x in b.get('rows', [])]}
 
 
 def ticket(_r, b):
@@ -123,15 +122,15 @@ def fill_odds(_r, b):
 
 
 def fixtures(r, _b):
-    return ENGINE.fixtures(int(r.query_params.get('days', 3)))
+    return ENGINE.fixtures(refresh=r.query_params.get('refresh') == '1')
 
 
 def match(r, _b):
     return ENGINE.match(r.query_params.get('home', ''), r.query_params.get('away', ''))
 
 
-def internationals(r, _b):
-    return ENGINE.internationals(int(r.query_params.get('days', 14)))
+def remember(_r, b):
+    return ENGINE.remember_name(b.get('typed', ''), b.get('canonical', ''))
 
 
 def history(_r, _b):
@@ -164,18 +163,18 @@ routes = [
     Route('/api/status', api(status)),
     Route('/api/settings', api(set_settings), methods=['POST']),
     Route('/api/teams', api(teams)),
-    Route('/api/coupon/{game}', api(get_coupon)),
-    Route('/api/coupon/{game}', api(put_coupon), methods=['PUT']),
+    Route('/api/coupon', api(get_coupon)),
+    Route('/api/coupon', api(put_coupon), methods=['PUT']),
+    Route('/api/legacy', api(legacy)),
     Route('/api/parse', api(parse), methods=['POST']),
     Route('/api/analyze', api(analyze), methods=['POST']),
-    Route('/api/analyze-many', api(analyze_many), methods=['POST']),
     Route('/api/ticket', api(ticket), methods=['POST']),
     Route('/api/ladder', api(ladder), methods=['POST']),
     Route('/api/sweep', api(sweep), methods=['POST']),
     Route('/api/fill-odds', api(fill_odds), methods=['POST']),
     Route('/api/fixtures', api(fixtures)),
     Route('/api/match', api(match)),
-    Route('/api/internationals', api(internationals)),
+    Route('/api/names/remember', api(remember), methods=['POST']),
     Route('/api/history', api(history)),
     Route('/api/history', api(save_history), methods=['POST']),
     Route('/api/history/{id}', api(delete_history), methods=['DELETE']),

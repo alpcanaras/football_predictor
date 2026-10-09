@@ -374,6 +374,17 @@ def replay(raw, state=None):
     return pd.concat(frames).reset_index(drop=True), state
 
 
+def build_state(raw, state=None):
+    """The state after every match in `raw`, without the per-match feature rows
+    replay() also builds. Live prediction only needs the state; features for
+    fixtures are looked up from it. Identical to replay(raw)[1] because
+    FeatureState.fixture() is read-only (tests/test_research.py pins this)."""
+    state = state or FeatureState()
+    for _, day in raw.sort_values(['Date']+KEY[:1]+KEY[2:], kind='stable').groupby('Date', sort=True):
+        state.update_day(day)
+    return state
+
+
 def feature_columns(market=False, totals=False):
     dummy = dict(Date='2000-01-01', league='british_pl', HomeTeam='H', AwayTeam='A')
     return list(FeatureState(market=market, totals=totals).fixture(dummy))
