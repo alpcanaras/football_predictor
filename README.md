@@ -28,15 +28,17 @@ Predictor_latest.ipynb        Interactive prediction + analytics notebook
 ## Everyday use
 
 **Easiest: double-click `run.command`** (macOS). It sets up the environment on
-first run and opens the app in your browser at http://127.0.0.1:8765. Nothing
-else to install. From a terminal it is the same thing:
+first run and opens the app in your browser at http://127.0.0.1:8765. From a
+terminal it is the same thing:
 
 ```bash
 ./venv/bin/python -m webapp        # --port 9000 --no-browser also work
 ```
 
 (`run_classic.command` / `streamlit run app.py` still start the old Streamlit
-app. It is a fallback and says so at the top; everything below is the new one.)
+app. It is a fallback and says so at the top.)
+
+**To share it with friends, build the disk image** (see "Packaged app" below).
 
 The app is a small local web server (`webapp/`: a Starlette JSON API over the
 same Python modules, plus a no-build JavaScript front end). Pages update in
@@ -44,41 +46,80 @@ place, so nothing re-runs or loses what you are typing.
 
 **One screen.** Fixtures on the left, your coupon on the right.
 
-- **Fixtures** start on the next 3 days (Today · +1 · +3 · +7 · All) and are
-  filterable by league and by team or league name (`/` jumps to the search).
-  Hover a match and press **＋** to put it on the coupon (it turns into ✓;
-  press again to take it off). Every row shows the probabilities for 1 · X · 2,
-  where they came from, the bookmaker odds, and both models side by side
-  (v2 and v1) — always, no toggles. Click a match for the full breakdown:
-  over/under, both-teams-to-score, expected goals, fair odds. Kickoff times
-  are shown in your own time zone. Matches already under way are hidden.
-- **The coupon decides its own game.** There is no Turkish/German switch.
-  Both pools pay at most three wrong, so 13 matches play as the 13er Wette
-  (prize at 10+) and 15 as Spor Toto (prize at 12+); any other size shows a
-  preview with the same rule and says how many more it needs.
+- **One model for each task.** There is no v1/v2 choice. The program uses the
+  model that measured best on matches it had not seen (V2_RESULTS.md has the
+  numbers):
+
+  | Task | What is used |
+  |---|---|
+  | Result 1 · X · 2 | the bookmaker odds when the match has them; otherwise the model (XGBoost + LightGBM on form and on ratings built from past odds) |
+  | Over / under 1.5, 2.5, 3.5 | the scoreline model, combined with the over/under odds when they exist |
+  | Both teams score | the scoreline model |
+  | Correct score | the scoreline model, adjusted so it agrees with the result and over/under numbers above |
+
+  Every number comes from one scoreline grid, so they cannot contradict
+  each other. National teams and clubs from different leagues are priced
+  from international / global club ratings the same way.
+- **Fixtures** start on the next 3 days (Today · Tomorrow · 3 days · 7 days ·
+  All). Filters are all visible: search (finds nicknames too, `/` jumps to
+  it), a league menu grouped by country with presets, "only matches with
+  odds", sort (kickoff, most likely result, closest matches). Put the pointer
+  on a match and press **+** to add it; press again to remove. The table shows
+  1 · X · 2, over 2.5, both-score and the most likely score. Click a match for
+  the full card (scores grid, goals, fair odds). Kickoff times are shown in
+  your own time zone.
+- **The coupon decides its own game.** 13 matches play as the 13er Wette
+  (prize at 10+), 15 as Spor Toto (prize at 12+); any other size shows a
+  preview with the same rule (both pay at most three wrong).
 - **The ticket builds itself** and re-optimises on every change: your chance
   of a prize, the tier ladder, columns, doubles and triples. Set the budget
-  with the presets or type one. **Click 1 / X / 2 on any match to play it
-  yourself** (🔒); the rest of the ticket is optimised around your picks.
-- **Adding matches that are not in the list** (national teams, cups, a
-  coupon that is not in the feed): type two teams in the box above the
-  coupon, or paste a whole coupon (⋯ menu, or paste into the box). Full
-  names work: “Başakşehir”, “VfL Wolfsburg”, “Bayern München”, “Man Utd”,
-  “Atlético Madrid”. A near-miss spelling is flagged as a guess you confirm
-  with one click, and the confirmation is remembered.
-- **Other tools** (⋯ menu and **More**): fill missing odds from the feed,
-  crowd % (the crowd-aware ticket and its trade-off), “what does more budget
-  buy?”, copy / print the ticket, save it to **History** (graded against the
+  with the presets or type one. **Click 1 / X / 2 on a match to play it
+  yourself**; the rest of the ticket is optimised around your picks.
+- **Adding matches that are not in the list** (national teams, cups): type two
+  teams in the boxes above the coupon, or paste a whole coupon. Full names
+  work: "Başakşehir", "VfL Wolfsburg", "Bayern München", "Man Utd". A
+  near-miss spelling is flagged as a guess you confirm with one click, and the
+  confirmation is remembered.
+- **More options:** fill missing odds from the feed, crowd percentages (the
+  against-the-crowd ticket and its trade-off), "what does a bigger budget
+  buy?", copy / print the ticket, save it to **History** (compared with the
   real results once the matches are played).
-- **Theme.** Dark by default. The 🌙 button next to the data pill cycles Dark → Light → Auto (follow the system) and remembers the choice.
-- **Models.** v2 is the default; with bookmaker odds the odds are always used.
-  The 📡 data pill (top right) shows data freshness, runs the updates with a
-  live log, and has the model setting (v2 · Auto · v1) tucked away.
+- **Data** (top right): freshness, one-click update with a live log,
+  automatic updating, how the numbers are made, theme (Dark by default,
+  Light, System).
 
 The coupon is saved as you go to `data/_toto/coupon.txt` (+ `coupon.meta.json`
-for crowd %, locked picks and budget). Your two old coupons from the classic
-app (`turkish.txt`, `german.txt`) are left alone and offered for import when
-the new coupon is empty.
+for crowd %, locked picks and budget). Your old coupons from the classic app
+(`turkish.txt`, `german.txt`) are left alone and offered for import.
+
+### Packaged app (macOS disk image)
+
+```bash
+./venv/bin/pip install pyinstaller      # once
+packaging/build.sh                      # about 80 seconds
+```
+
+This makes `dist/Football Predictor.app` and
+`dist/Football-Predictor-<version>.dmg` (about 95 MB): the program, its own
+Python and libraries, the data and the two model bundles. Nothing else is
+needed on the other Mac.
+
+- **Needs:** a Mac with an Apple chip (M1 or newer) and macOS 14 or newer
+  (the numeric libraries are built for macOS 14), and internet for fixtures
+  and new results.
+- **Where its files go:** `~/Library/Application Support/Football Predictor`
+  (data, coupons, history, caches, a log). The app itself is read-only, so an
+  update is "drag the new app over the old one"; coupons and history stay.
+- **Updating:** it downloads new results and fixtures by itself (every 12
+  hours while open, or on "Update now"). The models are the ones shipped in
+  the image; retraining is done here and shipped in the next image.
+- **Opening it on another Mac:** the app is signed ad hoc, not by an Apple
+  developer account, so macOS blocks it the first time. The image has a
+  "READ ME FIRST" file: System Settings > Privacy & Security > "Open Anyway",
+  or `xattr -cr "/Applications/Football Predictor.app"`. Removing that step
+  needs an Apple Developer ID (about 99 USD a year) to sign and notarise.
+- **Quitting:** Data > Quit the program, or close the page: it quits itself
+  after ten minutes.
 
 ### Toto coupon optimizer
 

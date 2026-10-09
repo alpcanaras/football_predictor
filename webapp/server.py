@@ -75,8 +75,8 @@ def status(_r, _b):
 
 
 def set_settings(_r, b):
-    if 'model_mode' in b:
-        return ENGINE.set_model_mode(b['model_mode'])
+    if 'auto_update' in b:
+        ENGINE.save_settings(auto_update=bool(b['auto_update']))
     return ENGINE.status()
 
 
@@ -125,8 +125,8 @@ def fixtures(r, _b):
     return ENGINE.fixtures(refresh=r.query_params.get('refresh') == '1')
 
 
-def match(r, _b):
-    return ENGINE.match(r.query_params.get('home', ''), r.query_params.get('away', ''))
+def match(_r, b):
+    return ENGINE.match(b.get('home', ''), b.get('away', ''), b.get('odds'), b.get('ou_odds'))
 
 
 def remember(_r, b):
@@ -153,6 +153,33 @@ def job(_r, _b):
     return ENGINE.job()
 
 
+_PING = {'t': time.time(), 'seen': False}
+
+
+def ping(_r, _b):
+    _PING['t'], _PING['seen'] = time.time(), True
+    return {'ok': True}
+
+
+def shutdown(delay: float = 0.0) -> None:
+    """Stop the program: helper processes first, then this one."""
+    def go():
+        time.sleep(delay)
+        try:
+            import multiprocessing
+            for p in multiprocessing.active_children():
+                p.terminate()
+        except Exception:
+            pass
+        os._exit(0)
+    threading.Thread(target=go, daemon=True).start()
+
+
+def quit_app(_r, _b):
+    shutdown(0.3)
+    return {'ok': True}
+
+
 async def index(_request):
     return FileResponse(os.path.join(STATIC, 'index.html'),
                         headers={'Cache-Control': 'no-store'})
@@ -173,13 +200,15 @@ routes = [
     Route('/api/sweep', api(sweep), methods=['POST']),
     Route('/api/fill-odds', api(fill_odds), methods=['POST']),
     Route('/api/fixtures', api(fixtures)),
-    Route('/api/match', api(match)),
+    Route('/api/match', api(match), methods=['POST']),
     Route('/api/names/remember', api(remember), methods=['POST']),
     Route('/api/history', api(history)),
     Route('/api/history', api(save_history), methods=['POST']),
     Route('/api/history/{id}', api(delete_history), methods=['DELETE']),
     Route('/api/jobs/{kind}', api(start_job), methods=['POST']),
     Route('/api/jobs', api(job)),
+    Route('/api/ping', api(ping), methods=['POST']),
+    Route('/api/quit', api(quit_app), methods=['POST']),
     Mount('/static', FreshStatic(directory=STATIC), name='static'),
 ]
 

@@ -33,7 +33,10 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from scripts import config
+
+PROJECT_ROOT = config.PROJECT_ROOT
 INTL_FILE = os.path.join(PROJECT_ROOT, 'data', 'global', 'international.csv')
 WC_FIXTURES_FILE = os.path.join(PROJECT_ROOT, 'data', 'global', 'wc2026_fixtures.csv')
 RESULTS_URL = ('https://raw.githubusercontent.com/martj42/'

@@ -49,3 +49,7 @@ reports/
 
 # Local safety backups of production models (git tag prod-* is the durable copy)
 models/_backup/
+
+# packaged app: built by packaging/build.sh, never committed
+build/
+dist/

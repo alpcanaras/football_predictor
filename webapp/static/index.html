@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Football Predictor</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231e5fd6'/><path d='M8 21l5-6 4 3 7-9' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
   <meta name="color-scheme" content="dark light">
   <script>
-    // Apply the saved theme before anything paints (no light flash): Dark unless
-    // the viewer chose Light, or Auto to follow the system.
+    // Set the saved theme before anything paints (no flash): Dark unless the
+    // viewer chose Light, or System to follow the operating system.
     (function () {
       var t = 'dark';
       try { t = localStorage.getItem('fp.theme') || 'dark'; } catch (e) { /* private mode */ }
@@ -20,14 +20,14 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">⚽ <span>Football Predictor</span></div>
+    <div class="brand">Football Predictor</div>
     <nav class="tabs" id="tabs">
-      <a href="#/build" data-page="build">🎟️ Build</a>
-      <a href="#/history" data-page="history">📈 History</a>
+      <a href="#/build" data-page="build">Build</a>
+      <a href="#/history" data-page="history">History</a>
     </nav>
     <div class="top-right">
-      <button class="pill themebtn" id="theme-btn" title="Theme"></button>
-      <button class="pill" id="data-pill" aria-haspopup="dialog">Data…</button>
+      <button class="btn quiet sm" id="data-btn" aria-haspopup="dialog" title="Data, updates and how the numbers are made">Data</button>
+      <button class="iconbtn" id="theme-btn" title="Theme" aria-label="Change theme"></button>
     </div>
   </header>
   <div id="data-pop" class="popover" hidden></div>
@@ -35,8 +35,8 @@
   <main id="app">
     <div class="boot" id="boot">
       <div class="spinner"></div>
-      <div id="boot-step">Starting…</div>
-      <div class="muted small">Loading match data and models — about 15 seconds.</div>
+      <div id="boot-step">Starting</div>
+      <div class="muted small">Loading match data and models. This takes a few seconds.</div>
     </div>
   </main>
 

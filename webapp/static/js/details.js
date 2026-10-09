@@ -1,58 +1,74 @@
-// The full card for one match: v1, v2 and the market side by side, goal
-// markets, fair odds. Opened by clicking a fixture or a coupon row.
-import { h, pct, fair, probBar, legend, badge, modal } from './ui.js';
+// The full card for one match. Opened by clicking a fixture or a coupon row.
+import { h, pct, fair, modal, SRC_TEXT } from './ui.js';
+import { icon } from './icons.js';
 import { api, store } from './api.js';
 
-export async function showDetails(home, away, coupon, { odds } = {}) {
+export async function showDetails(home, away, coupon, { odds, ou_odds } = {}) {
   const body = h('div', {}, h('div', { class: 'blank' }, h('span', { class: 'spin-sm' }), ' Loading…'));
-  const m = modal('Match details', body, [], { wide: true });
+  const m = modal('Match', body, [], { wide: true });
   try {
-    const d = await api.get(`/api/match?home=${encodeURIComponent(home)}&away=${encodeURIComponent(away)}`);
+    const d = await api.post('/api/match', { home, away, odds: odds || null, ou_odds: ou_odds || null });
     body.replaceChildren(render(d, coupon, m, odds));
   } catch (e) {
-    body.replaceChildren(h('div', { class: 'warnbox' }, `Could not load: ${e.message}`));
+    body.replaceChildren(h('div', { class: 'box warn' }, `Could not load: ${e.message}`));
   }
 }
 
 function render(d, coupon, m, oddsIn) {
-  if (!d.used) {
-    return h('div', {}, h('b', {}, 'No prediction for this pair.'), h('p', { class: 'small muted' }, 'One of the names is not recognised — close this and fix it on the coupon.'));
+  if (!d.ok) {
+    return h('div', {}, h('b', {}, 'No prediction for this pair.'),
+      h('p', { class: 'small muted', style: { marginTop: '6px' } }, 'One of the names is not recognised. Close this and correct it on the coupon.'));
   }
-  const home = d.home_display || d.home; const away = d.away_display || d.away;
-  const k = d.used.indexOf(Math.max(...d.used));
-  const lines = [];
-  const add = (label, p, used, extra) => { if (p) lines.push(h('div', { class: 'cmp-row' }, h('div', { class: `lbl${used ? ' used' : ''}` }, label), probBar(p), h('div', { class: 'fairs' }, extra || `fair ${p.map(fair).join(' · ')}`))); };
-  let src = d.kind;
-  if (d.kind === 'club') {
-    src = d.market ? 'odds' : d.model_version;
-    add('v2', d.v2, !d.market && d.model_version === 'v2');
-    add('v1', d.v1, !d.market && d.model_version === 'v1');
-    if (d.market) add('Odds', d.market, true, `${d.odds.map((x) => x.toFixed(2)).join(' · ')}`);
-  } else add(d.kind === 'intl' ? 'Nations' : 'Club Elo', d.used, true);
-
-  const g = d.goals_used; const g1 = d.goals_v1; const g2 = d.goals_v2;
-  const cmp = (key, fmt) => (g1 && g2 ? `v1 ${fmt(g1[key])} · v2 ${fmt(g2[key])}` : '');
-  const xg = (v) => (v ? `${v[0].toFixed(1)}–${v[1].toFixed(1)}` : '—');
-  const metrics = g ? h('div', { class: 'metrics' },
-    ...[['Over 1.5', 'ou15'], ['Over 2.5', 'ou25'], ['Over 3.5', 'ou35'], ['Both score', 'btts']].map(([t, key]) => h('div', { class: 'metric' },
-      h('div', { class: 't' }, t), h('div', { class: 'v' }, pct(g[key])), h('div', { class: 's' }, cmp(key, (x) => pct(x)) || (g[key] ? `fair ${fair(g[key])}` : '')))),
-    h('div', { class: 'metric' }, h('div', { class: 't' }, 'Expected goals'), h('div', { class: 'v' }, xg(g.xg)), h('div', { class: 's' }, cmp('xg', xg)))) : '';
-  const age = d.data_age_days;
-  const stale = age != null && age > 28 ? h('div', { class: 'warnbox', style: { marginTop: '10px' } }, `${d.league_name} data is ${age} days old — between seasons or not published yet, so form is out of date.`) : '';
+  const home = d.home_display; const away = d.away_display;
+  const p = d.p1x2; const top = p.indexOf(Math.max(...p));
   const onCoupon = coupon.has(d.home, d.away);
   const toggle = h('button', { class: `btn ${onCoupon ? '' : 'primary'}`, onclick: () => {
     const row = coupon.find(d.home, d.away);
     if (row) coupon.remove(row); else coupon.add({ home: d.home, away: d.away, odds: oddsIn || d.odds });
     m.close();
-  } }, onCoupon ? '✓ On the coupon — remove' : '＋ Add to coupon');
-  return h('div', { class: 'details' },
-    h('div', { class: 'mhead' }, h('h2', {}, `${home} – ${away}`), h('span', { class: 'muted' }, d.league_name || ''), badge(src), h('span', { class: 'spacer' }), toggle),
-    h('div', { class: 'row', style: { margin: '12px 0 2px' } },
-      h('div', {}, h('div', { class: 'muted small' }, 'Most likely'),
-        h('div', { class: 'big' }, [`${home} win`, 'Draw', `${away} win`][k], h('small', {}, `  ${pct(d.used[k])} · fair odds ${fair(d.used[k])}`))),
-      h('span', { class: 'spacer' }), legend()),
-    ...lines, metrics, stale,
-    h('div', { class: 'note' }, d.market
-      ? 'Odds were found for this match, so they are used: they beat both models. The model rows show where the models disagree — disagreement, not value.'
-      : d.kind === 'club' ? `No odds in the feed — using model ${d.model_version}.` : ''));
+  } }, icon(onCoupon ? 'check' : 'plus', 15), onCoupon ? 'On the coupon · remove' : 'Add to coupon');
+  const src = SRC_TEXT[d.src] || d.src;
+
+  const cell = (i, label) => {
+    const model = d.model_1x2 && d.market_1x2 ? d.model_1x2[i] : null;
+    return h('div', { class: `res${i === top ? ' top' : ''}` },
+      h('div', { class: 't' }, label),
+      h('div', { class: 'v' }, pct(p[i])),
+      h('div', { class: 's' }, `fair odds ${fair(p[i])}`),
+      model != null ? h('div', { class: 's' }, `model alone ${pct(model)}`) : '');
+  };
+  const goalsRow = h('div', { class: 'metrics' },
+    ...[['Over 1.5', d.ou['1.5']], ['Over 2.5', d.ou['2.5']], ['Over 3.5', d.ou['3.5']], ['Both teams score', d.btts]].map(([t, v]) => h('div', { class: 'metric' },
+      h('div', { class: 't' }, t), h('div', { class: 'v' }, pct(v)))),
+    h('div', { class: 'metric' }, h('div', { class: 't' }, 'Expected goals'),
+      h('div', { class: 'v' }, `${d.xg[0].toFixed(1)} – ${d.xg[1].toFixed(1)}`)));
+
+  const mx = Math.max(...d.grid.flat());
+  const heat = h('table', { class: 'heat', 'aria-label': 'Score probabilities' },
+    h('tr', {}, h('th', {}), ...[0, 1, 2, 3, 4].map((j) => h('th', {}, j))),
+    ...d.grid.map((row, i) => h('tr', {}, h('th', {}, i),
+      ...row.map((v) => h('td', { style: { background: `color-mix(in srgb, var(--accent) ${Math.round(70 * v / mx)}%, var(--surface-2))`,
+        color: v / mx > 0.55 ? 'var(--on-accent)' : 'var(--text)', fontWeight: v / mx > 0.55 ? 650 : 400 } }, v >= 0.005 ? Math.round(v * 100) : '·')))));
+  const tbl = h('table', { class: 'scoretbl' },
+    h('tr', {}, h('th', {}, 'Score'), h('th', {}, 'Chance'), h('th', {}, 'Fair odds')),
+    ...d.scores.map((s) => h('tr', {}, h('td', {}, h('b', {}, s.score.replace('-', ' – '))), h('td', {}, pct(s.p, 1)), h('td', {}, fair(s.p)))));
+
+  const age = d.data_age_days;
+  const warn = age != null && age > 28
+    ? h('div', { class: 'box warn', style: { marginTop: '14px' } }, `${d.league_name} data is ${age} days old. The league is between seasons or the new season is not published yet, so recent form is missing.`) : '';
+  const how = {
+    odds: 'The bookmaker odds are used for the result, because on matches the models had not seen the odds were more accurate. Over/under combines the model with the over/under odds when they exist.',
+    model: 'No odds were found, so the model gives the result. The score table and the over/under numbers come from the same scoreline model and agree with it.',
+    national: 'National teams are priced from international ratings and a goals model.',
+    'club elo': 'These clubs play in different leagues, so they are priced from global club ratings.',
+  }[d.src] || '';
+  return h('div', {},
+    h('div', { class: 'd-head' }, h('h2', {}, `${home} v ${away}`), h('span', { class: `tag ${d.src === 'odds' ? 'odds' : ''}` }, src),
+      h('span', { class: 'spacer' }), toggle),
+    h('div', { class: 'd-sub' }, [d.league_name, d.odds ? `odds ${d.odds.map((o) => o.toFixed(2)).join(' / ')}` : null].filter(Boolean).join('  ·  ')),
+    h('div', { class: 'sect' }, h('h4', {}, 'Result'), h('div', { class: 'res3' }, cell(0, home), cell(1, 'Draw'), cell(2, away))),
+    h('div', { class: 'sect' }, h('h4', {}, 'Goals'), goalsRow),
+    h('div', { class: 'sect' }, h('h4', {}, 'Likely scores'),
+      h('div', { class: 'scorewrap' }, tbl, h('div', {}, heat, h('div', { class: 'axis small muted', style: { textAlign: 'center', marginTop: '6px' } }, `${home} goals down, ${away} goals across. Cells show %.`)))),
+    warn, h('div', { class: 'note' }, how));
 }

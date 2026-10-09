@@ -9,7 +9,12 @@ import os
 # =============================================================================
 # PATHS
 # =============================================================================
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Where the code (and the shipped models) live ...
+RESOURCE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# ... and where data, caches, coupons and history are read and written. The
+# packaged app keeps those in the user's Application Support folder, because
+# its own folder is read-only; from a checkout they are the same place.
+PROJECT_ROOT = os.environ.get('FOOTBALL_PREDICTOR_HOME') or RESOURCE_ROOT
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
 MODELS_DIR = os.path.join(PROJECT_ROOT, 'models')
 MODELS_TIER1_DIR = os.path.join(MODELS_DIR, 'tier1')

@@ -1,4 +1,5 @@
 // Small DOM toolkit: no framework, so typing never re-renders an input.
+import { icon } from './icons.js';
 
 export function h(tag, attrs = {}, ...kids) {
   const el = document.createElement(tag);
@@ -68,52 +69,11 @@ export function dayLabel(d) {
   return diff === 0 ? `Today · ${base}` : diff === 1 ? `Tomorrow · ${base}` : base;
 }
 
-// ------------------------------------------------------------ probability bits
-export function probBar(p, { thin = false, pending = false } = {}) {
-  const bar = h('div', { class: `bar${thin ? ' thin' : ''}${pending ? ' pending' : ''}` });
-  if (p) setBar(bar, p);
-  return bar;
-}
-export function setBar(bar, p, pending = false) {
-  bar.classList.toggle('pending', !!pending);
-  if (!p) { bar.replaceChildren(); return; }
-  const lbl = ['1', 'X', '2'];
-  bar.replaceChildren(...p.map((x, i) => h('span', {
-    class: ['s1', 'sx', 's2'][i], style: { width: `${(x * 100).toFixed(2)}%` },
-    title: `${lbl[i]}: ${pct(x, 1)} (fair odds ${fair(x)})`,
-  }, x >= 0.12 ? `${Math.round(x * 100)}` : '')));
-}
-export function legend() {
-  return h('div', { class: 'legend' },
-    h('span', {}, h('i', { style: { background: 'var(--c1)' } }), '1 home'),
-    h('span', {}, h('i', { style: { background: 'var(--cx)' } }), 'X draw'),
-    h('span', {}, h('i', { style: { background: 'var(--c2)' } }), '2 away'));
-}
-
-// Three outcome tiles "1 49 | X 25 | 2 27"; the likeliest is emphasised.
-export function outcomeTiles(p, { src } = {}) {
-  const top = p ? p.indexOf(Math.max(...p)) : -1;
-  return h('div', { class: `tiles3${src ? ` src-${src}` : ''}` },
-    ...['1', 'X', '2'].map((s, i) => h('div', {
-      class: `t3 t3-${s}${i === top ? ' top' : ''}${p ? '' : ' empty'}`,
-      title: p ? `${s}: ${pct(p[i], 1)} · fair odds ${fair(p[i])}` : '',
-    }, h('b', {}, s), h('span', {}, p ? Math.round(p[i] * 100) : '·'))));
-}
-
-// source badges
-const SRC = {
-  odds: ['odds', 'Bookmaker odds — the best information there is'],
-  v2: ['model', 'Model v2 (no bookmaker odds for this match)'],
-  v1: ['model v1', 'Model v1 (v2 had no data for these teams)'],
-  euro: ['club elo', 'Cross-league clubs priced from global club ratings'],
-  intl: ['nations', 'National-team model'],
-  none: ['no data', 'Not recognised — counted as ⅓ each until you fix the name or add odds'],
+// ------------------------------------------------------------ source text
+// Where a number came from, in plain words.
+export const SRC_TEXT = {
+  odds: 'odds', model: 'model', nations: 'nations model', 'club elo': 'club Elo', none: 'no data',
 };
-export function badge(src) {
-  if (!src) return h('span');
-  const [label, tip] = SRC[src] || [src, ''];
-  return h('span', { class: `badge ${src}`, title: tip }, label);
-}
 
 // ------------------------------------------------------------ toasts / modal
 export function toast(msg, { action, onAction, error = false, ms = 3800, key } = {}) {
@@ -133,7 +93,7 @@ export function modal(title, body, buttons = [], { wide = false } = {}) {
   const back = h('div', { class: 'modal-back' });
   const close = () => { back.remove(); document.removeEventListener('keydown', esc); };
   function esc(e) { if (e.key === 'Escape') close(); }
-  const head = h('div', { class: 'modal-head' }, h('h3', {}, title), h('button', { class: 'iconbtn', title: 'Close', onclick: close }, '✕'));
+  const head = h('div', { class: 'modal-head' }, h('h3', {}, title), h('button', { class: 'iconbtn', title: 'Close', onclick: close }, icon('x', 16)));
   const m = h('div', { class: `modal${wide ? ' wide' : ''}`, role: 'dialog', 'aria-modal': 'true' }, head, body,
     buttons.length ? h('div', { class: 'row end', style: { marginTop: '14px' } },
       ...buttons.map(([label, fn, cls]) => h('button', {

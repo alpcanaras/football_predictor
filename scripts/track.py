@@ -232,11 +232,13 @@ def grade_coupon(entry: dict, lookup: ResultLookup) -> dict:
     }
 
 
-def grade_all() -> list[dict]:
+def grade_all(club: pd.DataFrame | None = None) -> list[dict]:
+    """Grade every saved coupon. `club` = results with Date, HomeTeam,
+    AwayTeam, FTR; when absent the processed-data file is read."""
     hist = load_history()
     if not hist:
         return []
-    lookup = ResultLookup()
+    lookup = ResultLookup(club=club)
     return [grade_coupon(e, lookup) for e in hist]
 
 

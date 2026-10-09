@@ -6,7 +6,7 @@ import { SlipView } from './slip.js';
 export class BuildPage {
   constructor(root, coupon) {
     const fx = h('section', { class: 'fixtures' });
-    const slip = h('aside', { class: 'slip', 'aria-label': 'Your coupon' });
+    const slip = h('aside', { class: 'slip panel', 'aria-label': 'Your coupon' });
     root.replaceChildren(h('div', { class: 'build' }, fx, slip));
     this.fx = new FixturesView(fx, coupon);
     this.slip = new SlipView(slip, coupon);

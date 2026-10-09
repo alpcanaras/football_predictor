@@ -278,7 +278,7 @@ def _promote(league: str, staged_path: str, season: Optional[str] = None) -> str
 # -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
-def main() -> int:
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description='Fetch latest football-data.co.uk CSVs')
     parser.add_argument('--apply', action='store_true',
@@ -297,7 +297,7 @@ def main() -> int:
                         help='Also download the last N seasons for the '
                              'selected leagues (for newly added leagues) and '
                              'exit')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     season = args.season or current_season_code()
     today = dt.date.today()

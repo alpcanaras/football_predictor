@@ -1,28 +1,27 @@
 """
 Engine behind the web app
 =========================
-Loads the heavy context once (match data, team tables, national-team model)
-and exposes plain functions — JSON-ready dicts in, dicts out — over the
-existing modules. Nothing here re-implements a model or the Toto maths:
-probabilities come from scripts/toto.match_probs (odds > club model v2/v1 >
-European clubs > national teams), tickets from scripts/ticket.build, history
-from scripts/track, names from scripts/names.
+Holds the loaded predictor and the app's state, and exposes plain functions —
+JSON-ready dicts in, dicts out. Nothing here re-implements a model or the Toto
+maths: numbers come from scripts/predictor.py (one best model per task),
+tickets from scripts/ticket.py, history from scripts/track.py, names from
+scripts/names.py.
 
 One coupon, no game switch. Both pools pay a prize for at most three wrong
 (13er Wette: 10+ of 13, Spor Toto: 12+ of 15), so the coupon is simply "the
 matches you added" and its size decides what it is: 13 plays as the 13er
 Wette, 15 as Spor Toto, anything else is previewed with the same rule.
 
-The coupon lives in data/_toto/coupon.txt in the one-line-per-match format
-the classic app uses ("Home - Away  1.95 3.40 3.90"); what that format cannot
-hold (crowd %, locked symbols, budget) lives next to it in coupon.meta.json.
+The coupon lives in <home>/data/_toto/coupon.txt in the one-line-per-match
+format ("Home - Away  1.95 3.40 3.90"); what that format cannot hold (crowd %,
+locked symbols, budget) lives next to it in coupon.meta.json.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -35,8 +34,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from scripts import config, names, toto  # noqa: E402
-from scripts import predict as predict_mod  # noqa: E402
 from scripts import ticket as ticket_mod  # noqa: E402
+from scripts.predictor import Predictor  # noqa: E402
 
 COUPON_DIR = os.environ.get('FOOTBALL_PREDICTOR_TOTO_DIR',
                             os.path.join(config.DATA_DIR, '_toto'))
@@ -51,9 +50,8 @@ GAMES = [  # (matches, label, flag, prize_from)
 ]
 FIXTURE_DAYS = 14
 FIXTURE_TTL = 15 * 60
-# Model calls touch shared caches (v2 per-league states, the intl model) that
-# are not safe to fill from two threads at once; one user, so serialise.
-MODEL_LOCK = threading.RLock()
+UPDATE_EVERY_H = 12                    # the packaged app refreshes data this often
+SRC_LABEL = {'odds': 'odds', 'model': 'model', 'national': 'nations', 'euro': 'club elo'}
 
 
 def game_for(n: int) -> dict:
@@ -65,19 +63,6 @@ def game_for(n: int) -> dict:
     return {'n': n, 'label': None, 'flag': '', 'complete': False,
             'prize_from': max(1, n - ALLOWED_WRONG),
             'key': 'german' if n <= 13 else 'turkish'}
-
-
-def _disp(league: str | None) -> str:
-    if not league:
-        return ''
-    return config.LEAGUE_REGISTRY.get(league, {}).get('display_name', league)
-
-
-def _hda(d: dict | None):
-    """{'home','draw','away'} -> [1, X, 2] floats, or None."""
-    if not d:
-        return None
-    return [float(d['home']), float(d['draw']), float(d['away'])]
 
 
 def _atomic_write(path: str, text: str) -> None:
@@ -93,15 +78,27 @@ def row_key(home: str, away: str) -> str:
     return '|'.join(sorted((names.norm(home), names.norm(away))))
 
 
+class _Log:
+    """A write-only file that appends to the running job's log."""
+
+    def __init__(self, job: dict):
+        self.job = job
+
+    def write(self, text):
+        self.job['log'] = (self.job['log'] + text)[-20000:]
+        return len(text)
+
+    def flush(self):
+        pass
+
+
 class Engine:
     def __init__(self):
         self.state, self.step, self.error = 'starting', '', None
-        self.ctx = None
-        self.index: names.NameIndex | None = None
+        self.pred: Predictor | None = None
         self.teams: list[dict] = []
         self.loaded_at = None
-        self.fx = {'state': 'idle', 'done': 0, 'total': 0, 'rows': [], 'mode': None,
-                   'loaded_at': None, 'error': None}
+        self.fx = {'state': 'idle', 'done': 0, 'total': 0, 'rows': [], 'loaded_at': None, 'error': None}
         self._fx_lock = threading.Lock()
         self._job = {'running': False, 'kind': None, 'log': '', 'ok': None,
                      'started': None, 'finished': None}
@@ -113,27 +110,19 @@ class Engine:
         try:
             self.state = 'loading'
             self.step = 'Reading match data'
-            from scripts import data_loader, utils
-            hist = data_loader.load_processed_data()
-            self.step = 'Building team tables'
-            team_stats = utils.get_team_stats_table(hist)
-            t2l = utils.get_team_to_league_map(hist)
-            self.step = 'National-team model'
-            ic = toto._load_intl()
+            if self.pred is None:
+                self.pred = Predictor()
+            else:
+                self.pred.reload()
+            self.step = 'Loading models'
+            self.pred.bundles()
             self.step = 'Team names'
-            predict_mod.set_model_mode(self.settings().get('model_mode', 'v2'))
-            self.index = names.NameIndex(t2l, sorted(ic['ratings']))
             self.teams = self._team_list()
-            last = hist.groupby('league')['Date'].max()
-            self.ctx = {'hist': hist, 'team_stats': team_stats,
-                        'team_to_league': t2l, 'teams': set(t2l),
-                        'weights': toto._load_blend_weights(),
-                        'last_result': {lg: pd.Timestamp(d) for lg, d in last.items()}}
-            self.fx = {'state': 'idle', 'done': 0, 'total': 0, 'rows': [], 'mode': None,
-                       'loaded_at': None, 'error': None}
+            self.fx = {'state': 'idle', 'done': 0, 'total': 0, 'rows': [], 'loaded_at': None, 'error': None}
             self.loaded_at = time.time()
             self.state, self.step = 'ready', ''
             self.start_fixtures()                 # prices the week ahead in the background
+            self._maybe_auto_update()
         except Exception as e:                           # shown on the page
             self.state, self.error = 'error', f'{type(e).__name__}: {e}'
             traceback.print_exc()
@@ -146,11 +135,13 @@ class Engine:
             raise RuntimeError('Still warming up — try again in a few seconds.')
 
     def _team_list(self) -> list[dict]:
-        idx = self.index
+        idx = self.pred.index
         out = []
         for canon, (kind, lg) in idx.entries.items():
             out.append({'name': canon, 'display': idx.display_of[canon], 'kind': kind,
-                        'league': lg, 'league_name': _disp(lg) if kind == 'club' else 'National team',
+                        'league': lg,
+                        'league_name': config.LEAGUE_REGISTRY.get(lg, {}).get('display_name', lg)
+                        if kind == 'club' else 'National team',
                         'keys': idx.search_keys(canon)})
         out.sort(key=lambda t: (t['kind'] != 'club', names.norm(t['display'])))
         return out
@@ -163,40 +154,40 @@ class Engine:
         except (OSError, ValueError):
             return {}
 
-    def set_model_mode(self, mode: str) -> dict:
-        predict_mod.set_model_mode(mode)                 # validates
+    def save_settings(self, **changes) -> dict:
         s = self.settings()
-        s['model_mode'] = mode
+        s.update({k: v for k, v in changes.items() if v is not None})
         _atomic_write(SETTINGS_FILE, json.dumps(s, indent=2))
-        self.start_fixtures(force=True)
-        return self.status()
+        return s
+
+    def auto_update_on(self) -> bool:
+        default = os.environ.get('FOOTBALL_PREDICTOR_AUTOUPDATE') == '1'
+        return bool(self.settings().get('auto_update', default))
 
     # ---------------------------------------------------------------- status
     def status(self) -> dict:
+        s = self.settings()
         out = {'state': self.state, 'step': self.step, 'error': self.error,
-               'model_mode': predict_mod.get_model_mode(),
                'allowed_wrong': ALLOWED_WRONG,
                'games': [{'n': n, 'label': lab, 'flag': flag, 'prize_from': pf}
                          for n, lab, flag, pf in GAMES],
-               'job': {k: v for k, v in self._job.items() if k != 'log'}}
-        try:
-            from scripts import v2_bundle
-            info = v2_bundle.serving_info()
-            out['v2'] = info
-            if os.path.isfile(v2_bundle.LATEST_GOALS):
-                with open(v2_bundle.LATEST_GOALS) as f:
-                    out['v2']['goals_tag'] = f.read().strip()
-        except Exception as e:
-            out['v2'] = {'ok': False, 'error': str(e)}
-        if self.ctx:
+               'job': {k: v for k, v in self._job.items() if k != 'log'},
+               'auto_update': self.auto_update_on(), 'last_update': s.get('last_update'),
+               'version': os.environ.get('FOOTBALL_PREDICTOR_VERSION', 'dev')}
+        if self.pred:
             today = pd.Timestamp.today().normalize()
-            last = self.ctx['last_result']
-            out['data_through'] = str(max(last.values()).date())
+            last = self.pred.last_result
+            out['data_through'] = str(self.pred.data_through.date())
             stale = sorted(((int((today - d).days), lg) for lg, d in last.items()
                             if (today - d).days > 28), reverse=True)
-            out['stale'] = [{'league': lg, 'name': _disp(lg), 'days': d} for d, lg in stale]
+            out['stale'] = [{'league': lg, 'name': config.LEAGUE_REGISTRY.get(lg, {}).get('display_name', lg),
+                             'days': d} for d, lg in stale]
             out['n_leagues'] = len(last)
-            out['n_teams'] = len(self.ctx['team_to_league'])
+            out['n_teams'] = len(self.pred.clubs)
+            try:
+                out['models'] = self.pred.info()
+            except Exception as e:
+                out['models'] = {'ok': False, 'error': str(e)}
         try:
             from scripts import international as intl
             out['intl_updated_h'] = round((time.time() - os.path.getmtime(intl.INTL_FILE)) / 3600, 1)
@@ -279,65 +270,34 @@ class Engine:
     # ----------------------------------------------------------------- names
     def remember_name(self, typed: str, canonical: str) -> dict:
         self.need_ready()
-        return {'ok': self.index.remember(typed, canonical)}
-
-    def _side(self, typed: str) -> dict:
-        """One team name -> {canonical, display, kind, how, suggest}."""
-        m = self.index.resolve(typed)
-        if m:
-            return {'canonical': m.canonical, 'display': m.display, 'kind': m.kind,
-                    'how': m.how, 'league': m.league, 'suggest': []}
-        # a club outside the modelled leagues can still be priced via club Elo
-        try:
-            from scripts import clubs_europe
-            if clubs_europe.resolve(typed):
-                return {'canonical': typed, 'display': typed, 'kind': 'euro',
-                        'how': 'euro', 'league': None, 'suggest': []}
-        except Exception:
-            pass
-        sug = [{'name': c, 'display': self.index.display_of[c],
-                'league_name': _disp(self.index.entries[c][1])
-                if self.index.entries[c][0] == 'club' else 'National team'}
-               for c, _ in self.index.suggest(typed, 5)]
-        return {'canonical': None, 'display': typed, 'kind': None, 'how': None,
-                'league': None, 'suggest': sug}
+        return {'ok': self.pred.index.remember(typed, canonical)}
 
     # ------------------------------------------------------------- analysis
+    @staticmethod
+    def _slim(r: dict) -> dict:
+        """The part of a prediction a coupon row or a list row needs."""
+        return {
+            'probs': r.get('p1x2'), 'src': SRC_LABEL.get(r.get('src'), r.get('src')) if r.get('ok') else 'none',
+            'market': r.get('market_1x2'), 'model': r.get('model_1x2'),
+            'ou25': (r.get('ou') or {}).get('2.5'), 'ou25_src': r.get('ou_src'),
+            'btts': r.get('btts'), 'xg': r.get('xg'),
+            'score': (r.get('scores') or [{}])[0].get('score'),
+            'score_p': (r.get('scores') or [{}])[0].get('p'),
+        }
+
     def analyze_row(self, home: str, away: str, odds=None) -> dict:
-        """Probabilities for one coupon row, where they came from, both club
-        model versions, and name suggestions for anything unrecognised."""
+        """Numbers for one coupon row, where they came from, and name
+        suggestions for anything unrecognised."""
         self.need_ready()
         home, away = str(home or '').strip(), str(away or '').strip()
-        out = {'home': home, 'away': away, 'probs': None, 'src': 'none',
-               'v1': None, 'v2': None, 'market': None, 'league': None, 'league_name': '',
-               'sides': {'home': None, 'away': None}}
         if not home or not away:
-            return out
-        sh, sa = self._side(home), self._side(away)
-        out['sides'] = {'home': sh, 'away': sa}
-        ch, ca = sh['canonical'] or home, sa['canonical'] or away
+            return {'home': home, 'away': away, 'probs': None, 'src': 'none', 'sides': {'home': None, 'away': None}}
         o = list(odds) if odds and len(odds) == 3 and all(x and float(x) > 1 for x in odds) else None
-        row = pd.Series({'home': ch, 'away': ca,
-                         'o1': o[0] if o else None, 'ox': o[1] if o else None,
-                         'o2': o[2] if o else None})
-        ctx = dict(self.ctx)
-        ctx['model_detail'] = {}
-        with MODEL_LOCK:
-            p, src, model = toto.match_probs(row, ctx)
-        det = ctx['model_detail'].get((ch, ca))
-        if det:
-            out['v1'], out['v2'] = _hda(det['v1']), _hda(det['v2'])
-            out['league'], out['league_name'] = det['league'], _disp(det['league'])
-        if o:
-            out['market'] = [float(x) for x in toto._devig(*o)]
-        if p is not None:
-            out['probs'] = [float(x) for x in p]
-            if src in ('blend', 'odds'):
-                out['src'] = 'odds'
-            elif src == 'model' and det:
-                out['src'] = 'odds' if det['feed_odds'] else det['version']
-            else:
-                out['src'] = src                         # euro / intl
+        r = self.pred.predict(home, away, odds=o)
+        out = {'home': r['home'], 'away': r['away'], 'sides': r['sides'],
+               'league': r.get('league'), 'league_name': r.get('league_name', ''), **self._slim(r)}
+        if not r['ok']:
+            out.update(probs=None, src='none')
         return out
 
     # --------------------------------------------------------------- tickets
@@ -426,16 +386,14 @@ class Engine:
         is priced, so the page never waits on the models."""
         if self.state != 'ready':
             return
-        mode = predict_mod.get_model_mode()
         with self._fx_lock:
             fx = self.fx
             if fx['state'] == 'loading':
                 return
-            fresh = (fx['state'] == 'ready' and fx['mode'] == mode
-                     and time.time() - (fx['loaded_at'] or 0) < FIXTURE_TTL)
+            fresh = fx['state'] == 'ready' and time.time() - (fx['loaded_at'] or 0) < FIXTURE_TTL
             if fresh and not force and not refetch:
                 return
-            self.fx = {'state': 'loading', 'done': 0, 'total': 0, 'rows': [], 'mode': mode,
+            self.fx = {'state': 'loading', 'done': 0, 'total': 0, 'rows': [],
                        'loaded_at': None, 'error': None, 'started': time.time()}
         threading.Thread(target=self._price_fixtures, args=(refetch,), daemon=True).start()
 
@@ -443,29 +401,33 @@ class Engine:
         fx = self.fx
         try:
             from scripts import fixtures as fx_mod
-            fx_mod.fetch(force=refetch)
+            try:
+                fx_mod.fetch(force=refetch)
+            except Exception:                       # offline: use the saved feed
+                traceback.print_exc()
             feed = fx_mod.load(fetch_if_missing=False)
             now = pd.Timestamp.now().normalize()
             feed = feed[(feed['Date'] >= now) & (feed['Date'] <= now + pd.Timedelta(days=FIXTURE_DAYS))]
             feed = feed.dropna(subset=['league', 'HomeTeam', 'AwayTeam', 'Date'])
             feed = feed.drop_duplicates(['league', 'Date', 'HomeTeam', 'AwayTeam'])
             feed = feed.sort_values(['Date', 'Time', 'league', 'HomeTeam'], na_position='last')
-            idx = self.index
+            idx = self.pred.index
+            ok = lambda x: pd.notna(x) and x > 1                                       # noqa: E731
             base = []
-            for k, m in enumerate(feed.to_dict('records')):
-                odds = [m['OddsH'], m['OddsD'], m['OddsA']]
-                odds = [float(x) for x in odds] if all(pd.notna(x) and x > 1 for x in odds) else None
-                market = [float(x) for x in toto._devig(*odds)] if odds else None
+            for m in feed.to_dict('records'):
+                odds = [float(m[c]) for c in ('OddsH', 'OddsD', 'OddsA')] \
+                    if all(ok(m[c]) for c in ('OddsH', 'OddsD', 'OddsA')) else None
+                ou = [float(m['OddsOver25']), float(m['OddsUnder25'])] \
+                    if ok(m['OddsOver25']) and ok(m['OddsUnder25']) else None
                 home, away, lg = m['HomeTeam'], m['AwayTeam'], m['league']
                 base.append({
                     'id': f'{lg}|{m["Date"].date()}|{home}|{away}', 'date': str(m['Date'].date()),
                     'time': (str(m['Time']) if pd.notna(m.get('Time')) else None),
-                    'league': lg, 'league_name': _disp(lg),
+                    'league': lg, 'league_name': config.LEAGUE_REGISTRY.get(lg, {}).get('display_name', lg),
                     'home': home, 'away': away,
                     'home_display': idx.display_of.get(home, home), 'away_display': idx.display_of.get(away, away),
-                    'odds': odds, 'market': market, 'probs': market, 'src': 'odds' if market else None,
-                    'v1': None, 'v2': None, 'ou25': None, 'btts': None, 'goals_v1': None, 'goals_v2': None,
-                    'pending': True})
+                    'odds': odds, 'ou_odds': ou, 'probs': None, 'src': 'odds' if odds else None,
+                    'ou25': None, 'btts': None, 'score': None, 'pending': True})
             fx['rows'] = base
             fx['total'] = len(base)
             try:                                       # build league states in parallel first
@@ -473,28 +435,15 @@ class Engine:
                 v2_bundle.warm(sorted({r['league'] for r in base}))
             except Exception:
                 traceback.print_exc()
-            c = self.ctx
             for i, r in enumerate(base):
                 new = dict(r, pending=False)
                 try:
-                    with MODEL_LOCK:
-                        pred = predict_mod.predict_match(
-                            r['home'], r['away'], c['team_stats'], c['team_to_league'], c['hist'],
-                            include_xg=False, prediction_date=pd.Timestamp(r['date']))
-                    new['v1'], new['v2'] = _hda(pred.get('1x2_v1')), _hda(pred.get('1x2_v2'))
-                    g1, g2 = pred.get('goals_v1') or {}, pred.get('goals_v2') or {}
-                    new['goals_v1'] = {'ou25': (g1.get('ou25') or {}).get('over'), 'btts': (g1.get('btts') or {}).get('yes')}
-                    new['goals_v2'] = {'ou25': (g2.get('ou25') or {}).get('over'), 'btts': (g2.get('btts') or {}).get('yes')} if g2 else None
-                    if 'ou25' in pred:
-                        new['ou25'] = pred['ou25']['over']
-                    if 'btts' in pred:
-                        new['btts'] = pred['btts']['yes']
-                    new['model_version'] = pred.get('model_version')
-                    if not new['market']:
-                        used = _hda(pred.get('1x2'))
-                        new['probs'], new['src'] = used, (pred.get('model_version') or 'v1')
+                    p = self.pred.predict(r['home'], r['away'], odds=r['odds'], ou_odds=r['ou_odds'],
+                                          date=pd.Timestamp(r['date']))
+                    if p['ok']:
+                        new.update(self._slim(p), xg=p.get('xg'))
                 except Exception:
-                    pass                                # leaves the odds-only row
+                    traceback.print_exc()           # leaves the row without numbers
                 fx['rows'][i] = new
                 fx['done'] = i + 1
             fx['loaded_at'] = time.time()
@@ -508,53 +457,21 @@ class Engine:
         self.start_fixtures(refetch=refresh)
         fx = self.fx
         return {'state': fx['state'], 'done': fx['done'], 'total': fx['total'],
-                'rows': list(fx['rows']), 'mode': fx['mode'], 'error': fx.get('error'),
-                'loaded_at': fx['loaded_at']}
+                'rows': list(fx['rows']), 'error': fx.get('error'), 'loaded_at': fx['loaded_at']}
 
     # ----------------------------------------------------------------- match
-    def match(self, home: str, away: str) -> dict:
-        """Full card for any pair: club model (both versions + goals) when the
-        clubs share a league, else the European / national fallback."""
+    def match(self, home: str, away: str, odds=None, ou_odds=None) -> dict:
+        """The full card for any pair of teams."""
         self.need_ready()
-        sh, sa = self._side(home), self._side(away)
-        h, a = sh['canonical'], sa['canonical']
-        t2l = self.ctx['team_to_league']
-        if h and a and sh['kind'] == 'club' and sa['kind'] == 'club' and t2l.get(h) == t2l.get(a):
-            with MODEL_LOCK:
-                p = predict_mod.predict_match(h, a, self.ctx['team_stats'], t2l,
-                                              self.ctx['hist'], include_xg=True,
-                                              prediction_date=pd.Timestamp.now())
-            lg = p.get('league')
-            last = self.ctx['last_result'].get(lg)
-            age = int((pd.Timestamp.today().normalize() - last).days) if last is not None else None
-            mk = p.get('market')
-
-            def goals(g):
-                if not g:
-                    return None
-                return {'ou15': g.get('ou15', {}).get('over'), 'ou25': g.get('ou25', {}).get('over'),
-                        'ou35': g.get('ou35', {}).get('over'), 'btts': g.get('btts', {}).get('yes'),
-                        'xg': [g['xg']['home'], g['xg']['away']] if g.get('xg') else None}
-            return {'kind': 'club', 'home': h, 'away': a, 'home_display': sh['display'],
-                    'away_display': sa['display'], 'league': lg, 'league_name': _disp(lg),
-                    'data_age_days': age,
-                    'used': _hda(p.get('1x2')), 'model_version': p.get('model_version'),
-                    'goals_version': p.get('goals_version'),
-                    'v1': _hda(p.get('1x2_v1')), 'v2': _hda(p.get('1x2_v2')),
-                    'market': _hda(mk['implied']) if mk else None,
-                    'odds': [mk['odds']['home'], mk['odds']['draw'], mk['odds']['away']] if mk else None,
-                    'goals_used': goals({k: p.get(k) for k in ('ou15', 'ou25', 'ou35', 'btts', 'xg')}),
-                    'goals_v1': goals(p.get('goals_v1')), 'goals_v2': goals(p.get('goals_v2')),
-                    'ou25_odds': (mk or {}).get('ou25_odds')}
-        r = self.analyze_row(home, away)
-        return {'kind': r['src'], 'home': home, 'away': away,
-                'home_display': sh['display'], 'away_display': sa['display'],
-                'used': r['probs'], 'sides': r['sides'], 'league_name': r['league_name']}
+        o = list(odds) if odds and len(odds) == 3 and all(x and float(x) > 1 for x in odds) else None
+        r = self.pred.predict(home, away, odds=o, ou_odds=ou_odds)
+        r['src'] = SRC_LABEL.get(r.get('src'), r.get('src')) if r['ok'] else 'none'
+        return r
 
     # --------------------------------------------------------------- history
     def history(self) -> dict:
         from scripts import track
-        graded = track.grade_all()
+        graded = track.grade_all(club=self.pred.results if self.pred else None)
         entries = {e['id']: e for e in track.load_history()}
         out = []
         for g in reversed(graded):
@@ -593,34 +510,45 @@ class Engine:
         return {'ok': track.delete_coupon(entry_id)}
 
     # ------------------------------------------------------------ data jobs
+    def _maybe_auto_update(self) -> None:
+        if not self.auto_update_on() or self._job['running']:
+            return
+        last = self.settings().get('last_update')
+        if last is None or time.time() - float(last) > UPDATE_EVERY_H * 3600:
+            self.start_job('all')
+
     def start_job(self, kind: str) -> dict:
+        """Download the newest results (football-data.co.uk) and the
+        international results, in this process, and reload everything."""
         if self._job['running']:
             return {'ok': False, 'error': 'A data update is already running.'}
-        cmds = {'leagues': [sys.executable, os.path.join(ROOT, 'scripts', 'fetch_latest.py'),
-                            '--apply', '--refresh-processed'],
-                'internationals': [sys.executable, os.path.join(ROOT, 'scripts', 'international.py'),
-                                   'update']}
-        if kind not in cmds:
+        if kind not in ('all', 'leagues', 'internationals'):
             return {'ok': False, 'error': f'unknown job {kind!r}'}
         self._job = {'running': True, 'kind': kind, 'log': '', 'ok': None,
                      'started': time.time(), 'finished': None}
 
         def work():
+            log = _Log(self._job)
+            ok = True
             try:
-                proc = subprocess.Popen(cmds[kind], cwd=ROOT, stdout=subprocess.PIPE,
-                                        stderr=subprocess.STDOUT, text=True)
-                for line in proc.stdout:
-                    self._job['log'] = (self._job['log'] + line)[-20000:]
-                rc = proc.wait()
-                # fetch_latest exits 3 when some seasons are simply not published
-                self._job['ok'] = rc in (0, 3)
-                if self._job['ok']:
-                    toto._INTL_CACHE = None
-                    self.load()                      # pick up the new data
+                with contextlib.redirect_stdout(log), contextlib.redirect_stderr(log):
+                    if kind in ('all', 'leagues'):
+                        from scripts import fetch_latest
+                        rc = fetch_latest.main(['--apply'])
+                        print(f'\n  league data: exit {rc} (3 = some seasons not published yet, normal)')
+                        ok = ok and rc in (0, 3)
+                    if kind in ('all', 'internationals'):
+                        from scripts import international as intl
+                        intl.cmd_update(None)
+                if ok:
+                    self.save_settings(last_update=time.time())
+                    self.load()                      # reread data, then re-price
+                    self.start_fixtures(force=True, refetch=True)
             except Exception as e:
                 self._job['log'] += f'\n{type(e).__name__}: {e}'
-                self._job['ok'] = False
+                ok = False
             finally:
+                self._job['ok'] = ok
                 self._job['running'] = False
                 self._job['finished'] = time.time()
 
