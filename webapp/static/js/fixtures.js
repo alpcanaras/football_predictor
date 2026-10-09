@@ -1,27 +1,41 @@
-// The fixtures list: everything in the odds feed, grouped by day, filterable,
-// with a "+" that appears on hover. It repaints in place while matches are
-// still being priced, so the page is usable from the first second.
-import { h, norm, pct, pct3, fair, kickoff, ymd, hhmm, dayLabel, outcomeTiles, badge, textField, toast, modal } from './ui.js';
+// The fixtures table: everything in the odds feed, grouped by day, with the
+// numbers in columns so they can be scanned. Filters are all visible; the add
+// button appears on hover. It repaints in place while matches are still being
+// priced, so the page is usable from the first second.
+import { h, norm, pct, kickoff, ymd, hhmm, dayLabel, textField, toast, modal, SRC_TEXT } from './ui.js';
+import { icon } from './icons.js';
 import { api, store } from './api.js';
 import { Coupon, pairKey } from './coupon.js';
 import { showDetails } from './details.js';
 
-const WINDOWS = [[0, 'Today'], [1, '+1'], [3, '+3'], [7, '+7'], [14, 'All']];
+// label, [first day, last day] counted from today
+const WINDOWS = {
+  today: ['Today', [0, 0]], tomorrow: ['Tomorrow', [1, 1]], d3: ['3 days', [0, 3]], d7: ['7 days', [0, 7]], all: ['All', [0, 14]],
+};
+const SORTS = { time: 'Kickoff', conf: 'Most likely result', even: 'Closest matches' };
+const PRESETS = [
+  ['Top 5 in Europe', ['british_pl', 'spanish', 'german', 'italian', 'french']],
+  ['Süper Lig', ['turkish']],
+  ['Bundesliga 1 + 2', ['german', 'german_2']],
+];
+const CELLS = ['1', 'X', '2'];
 
 export class FixturesView {
   constructor(root, coupon) {
     this.root = root; this.coupon = coupon;
-    this.window = Number(localStorage.getItem('fp.window') ?? 3);
+    const saved = localStorage.getItem('fp.window');
+    this.win = WINDOWS[saved] ? saved : 'd3';
+    this.sort = localStorage.getItem('fp.sort') || 'time';
+    this.oddsOnly = localStorage.getItem('fp.oddsonly') === '1';
     this.q = ''; this.leagues = new Set(); this.showStarted = false;
     this.data = { state: 'loading', rows: [], done: 0, total: 0 };
-    this.els = new Map();                           // fixture id -> {el, sig}
+    this.els = new Map();
     this.timer = null;
-    this.unsub = [coupon.on((w) => { if (w === 'rows') this.markAdded(); }),
-      store.on((w) => { if (w === 'mode') this.load(); })];
+    this.unsub = [coupon.on((w) => { if (w === 'rows') this.markAdded(); })];
     this.build();
     this.load();
     this.onKey = (e) => {
-      if (e.key === '/' && !/input|textarea/i.test(document.activeElement?.tagName || '')) {
+      if (e.key === '/' && !/input|textarea|select/i.test(document.activeElement?.tagName || '')) {
         e.preventDefault(); this.search.input.focus();
       }
     };
@@ -31,26 +45,44 @@ export class FixturesView {
 
   // ----------------------------------------------------------------- layout
   build() {
-    this.winBtns = WINDOWS.map(([d, label]) => h('button', { class: 'seg-btn', 'data-d': d, onclick: () => this.setWindow(d), title: d === 14 ? 'Everything in the feed (two weeks)' : d === 0 ? 'Matches today' : `Today and the next ${d} day${d > 1 ? 's' : ''}` }, label));
-    this.search = textField({ placeholder: 'Search team or league…  ( / )', cls: 'search', onInput: (v) => { this.q = norm(v); this.paint(); } });
-    this.lgBtn = h('button', { class: 'btn', onclick: (e) => this.leagueMenu(e.currentTarget) }, 'Leagues ▾');
-    this.addAll = h('button', { class: 'btn primary', onclick: () => this.addShown(), hidden: true });
-    this.status = h('span', { class: 'small muted' });
-    this.refresh = h('button', { class: 'iconbtn', title: 'Refresh odds and predictions', onclick: () => this.load(true) }, '↻');
+    this.winSeg = h('div', { class: 'seg', role: 'group', 'aria-label': 'Days' },
+      ...Object.entries(WINDOWS).map(([k, [label]]) => h('button', { 'data-k': k, onclick: () => this.setWindow(k) }, label)));
+    this.search = textField({ placeholder: 'Search a team or league', cls: '', onInput: (v) => { this.q = norm(v); this.paint(); } });
+    this.search.wrap.classList.add('withicon');
+    this.search.wrap.prepend(h('span', { class: 'lead' }, icon('search', 15)));
+    this.lgBtn = h('button', { class: 'btn', onclick: (e) => this.leagueMenu(e.currentTarget) });
+    this.sortSel = h('select', { class: 'txt', 'aria-label': 'Sort', style: { width: '170px' },
+      onchange: (e) => { this.sort = e.target.value; localStorage.setItem('fp.sort', this.sort); this.paint(); } },
+    ...Object.entries(SORTS).map(([k, v]) => h('option', { value: k, selected: k === this.sort }, `Sort: ${v}`)));
+    this.oddsChk = h('input', { type: 'checkbox', checked: this.oddsOnly,
+      onchange: (e) => { this.oddsOnly = e.target.checked; localStorage.setItem('fp.oddsonly', this.oddsOnly ? '1' : '0'); this.paint(); } });
+    this.count = h('span', { class: 'small muted' });
     this.chips = h('div', { class: 'chips' });
-    this.list = h('div', { class: 'fx-list' });
+    this.reset = h('button', { class: 'link small', onclick: () => this.resetFilters(), hidden: true }, 'Reset filters');
+    this.addAll = h('button', { class: 'btn sm', onclick: () => this.addShown(), hidden: true });
+    this.refresh = h('button', { class: 'iconbtn sm', title: 'Reload odds and predictions', onclick: () => this.load(true) }, icon('refresh', 15));
+    this.list = h('div');
+    const header = h('div', { class: 'fgrid fhead panel', style: { borderBottomLeftRadius: 0, borderBottomRightRadius: 0, borderBottom: '1px solid var(--border)', marginTop: '6px' } },
+      h('div', {}, 'Time'), h('div', {}, 'Match'),
+      h('div', { class: 'r', title: 'Home win, %' }, '1 %'), h('div', { class: 'r', title: 'Draw, %' }, 'X %'), h('div', { class: 'r', title: 'Away win, %' }, '2 %'),
+      h('div', { class: 'r', title: 'Three or more goals, %' }, 'O 2.5 %'), h('div', { class: 'r', title: 'Both teams score, %' }, 'BTTS %'),
+      h('div', { class: 'r', title: 'Most likely score' }, 'Score'), h('div'));
     this.root.replaceChildren(
       h('div', { class: 'fx-head' },
-        h('div', { class: 'fx-title' }, h('h1', {}, 'Fixtures'), this.status, h('span', { class: 'spacer' }), this.refresh),
-        h('div', { class: 'fx-tools' },
-          h('div', { class: 'seg' }, ...this.winBtns), this.search.wrap, this.lgBtn, this.addAll),
-        this.chips),
-      this.list);
+        h('div', { class: 'fx-title' }, h('h1', {}, 'Fixtures'), this.count, h('span', { class: 'spacer' }), this.refresh),
+        h('div', { class: 'fx-tools' }, this.winSeg, this.search.wrap, this.lgBtn, this.sortSel),
+        h('div', { class: 'fx-sub' }, h('label', { class: 'check' }, this.oddsChk, 'Only matches with odds'),
+          this.chips, this.reset, h('span', { class: 'spacer' }), this.addAll)),
+      header, this.list);
     this.syncWindow();
   }
 
-  setWindow(d) { this.window = d; localStorage.setItem('fp.window', d); this.syncWindow(); this.paint(); }
-  syncWindow() { this.winBtns.forEach((b) => b.classList.toggle('on', Number(b.dataset.d) === this.window)); }
+  setWindow(k) { this.win = k; localStorage.setItem('fp.window', k); this.syncWindow(); this.paint(); }
+  syncWindow() { [...this.winSeg.children].forEach((b) => b.classList.toggle('on', b.dataset.k === this.win)); }
+  resetFilters() {
+    this.q = ''; this.search.set(''); this.leagues.clear(); this.oddsOnly = false; this.oddsChk.checked = false;
+    localStorage.setItem('fp.oddsonly', '0'); this.paint();
+  }
 
   // ------------------------------------------------------------------ data
   async load(refresh = false) {
@@ -61,112 +93,135 @@ export class FixturesView {
       if (this.data.state === 'loading') this.timer = setTimeout(() => this.load(), 900);
     } catch (e) {
       if (/warming up/i.test(e.message)) { this.timer = setTimeout(() => this.load(), 1500); return; }
-      this.list.replaceChildren(h('div', { class: 'blank card' }, `Could not load fixtures: ${e.message}`));
+      this.list.replaceChildren(h('div', { class: 'blank panel' }, `Could not load fixtures: ${e.message}`));
     }
   }
 
-  // prepared rows: kickoff in the viewer's time zone
-  rows() {
+  prepared() {
     const now = new Date();
     return this.data.rows.map((f) => {
       const ko = kickoff(f.date, f.time);
-      return { f, ko, day: ymd(ko.date), started: ko.hasTime && ko.date < now };
-    }).filter((x) => !(x.ko.hasTime && x.ko.date.getTime() + 150 * 60000 < now.getTime())     // already over
-      && (this.showStarted || !x.started));                                                    // already kicked off
+      return { f, ko, day: ymd(ko.date), started: ko.hasTime && ko.date < now,
+        over: ko.hasTime && ko.date.getTime() + 150 * 60000 < now.getTime() };
+    }).filter((x) => !x.over);
   }
 
-  startedCount() {
-    const now = new Date(); const t = new Date(); const hi = ymd(new Date(t.getFullYear(), t.getMonth(), t.getDate() + this.window));
-    return this.data.rows.filter((f) => { const ko = kickoff(f.date, f.time); return ko.hasTime && ko.date < now && ko.date.getTime() + 150 * 60000 >= now.getTime() && ymd(ko.date) <= hi; }).length;
+  inWindow(x) {
+    const [, [a, b]] = WINDOWS[this.win];
+    const t = new Date();
+    const lo = ymd(new Date(t.getFullYear(), t.getMonth(), t.getDate() + a));
+    const hi = ymd(new Date(t.getFullYear(), t.getMonth(), t.getDate() + b));
+    return x.day >= lo && x.day <= hi;
+  }
+
+  haystack(f) {
+    const keys = (n) => (store.byName.get(n)?.keys || []).join(' ');
+    return norm(`${f.home_display} ${f.away_display} ${f.league_name} ${keys(f.home)} ${keys(f.away)}`);
   }
 
   shown() {
-    const today = new Date(); const last = new Date(today.getFullYear(), today.getMonth(), today.getDate() + this.window);
-    const lo = ymd(today); const hi = ymd(last);
-    return this.rows().filter(({ f, day }) => day >= lo && day <= hi
-      && (!this.leagues.size || this.leagues.has(f.league))
-      && (!this.q || norm(`${f.home_display} ${f.away_display} ${f.home} ${f.away} ${f.league_name}`).includes(this.q)))
-      .sort((a, b) => a.ko.date - b.ko.date || a.f.league_name.localeCompare(b.f.league_name));
+    const topP = (f) => (f.probs ? Math.max(...f.probs) : 0);
+    let xs = this.prepared().filter((x) => this.inWindow(x)
+      && (this.showStarted || !x.started)
+      && (!this.leagues.size || this.leagues.has(x.f.league))
+      && (!this.oddsOnly || x.f.odds)
+      && (!this.q || this.haystack(x.f).includes(this.q)));
+    if (this.sort === 'time') xs = xs.sort((a, b) => a.ko.date - b.ko.date || a.f.league_name.localeCompare(b.f.league_name));
+    else if (this.sort === 'conf') xs = xs.sort((a, b) => topP(b.f) - topP(a.f));
+    else xs = xs.sort((a, b) => (topP(a.f) || 9) - (topP(b.f) || 9));
+    return xs;
   }
 
   // ------------------------------------------------------------------ paint
   paint() {
     const d = this.data;
-    const all = this.rows();
     const shown = this.shown();
     const priced = d.rows.filter((r) => !r.pending).length;
-    const hidden = this.showStarted ? 0 : this.startedCount();
-    this.status.replaceChildren(d.state === 'loading' && d.total
-      ? `pricing ${priced}/${d.total}…` : `${shown.length} match${shown.length === 1 ? '' : 'es'}`,
-    hidden ? h('button', { class: 'linkbtn', style: { marginLeft: '10px' }, onclick: () => { this.showStarted = true; this.paint(); } }, `${hidden} already started — show`) : '',
-    this.showStarted ? h('button', { class: 'linkbtn', style: { marginLeft: '10px' }, onclick: () => { this.showStarted = false; this.paint(); } }, 'hide started') : '');
-    this.lgBtn.textContent = this.leagues.size ? `Leagues (${this.leagues.size}) ▾` : 'Leagues ▾';
-    this.lgBtn.classList.toggle('on', this.leagues.size > 0);
-    this.chips.replaceChildren(...[...this.leagues].map((k) => h('button', { class: 'chip on', title: 'Remove this filter', onclick: () => { this.leagues.delete(k); this.paint(); } },
-      `${all.find((x) => x.f.league === k)?.f.league_name || k}  ×`)));
+    const hiddenStarted = this.showStarted ? 0 : this.prepared().filter((x) => x.started && this.inWindow(x)).length;
+    this.count.replaceChildren(
+      d.state === 'loading' && d.total ? `Pricing ${priced} of ${d.total}…` : `${shown.length} match${shown.length === 1 ? '' : 'es'}`,
+      hiddenStarted ? h('span', {}, ' · ', h('button', { class: 'link', onclick: () => { this.showStarted = true; this.paint(); } }, `show ${hiddenStarted} already started`)) : '',
+      this.showStarted ? h('span', {}, ' · ', h('button', { class: 'link', onclick: () => { this.showStarted = false; this.paint(); } }, 'hide started')) : '');
+    const nLg = this.leagues.size;
+    this.lgBtn.replaceChildren(icon('filter', 15), nLg ? `Leagues · ${nLg}` : 'All leagues', icon('chevron', 14));
+    this.lgBtn.classList.toggle('on', nLg > 0);
+    const names = (k) => this.data.rows.find((r) => r.league === k)?.league_name || k;
+    this.chips.replaceChildren(...[...this.leagues].map((k) => h('span', { class: 'chip' }, names(k),
+      h('button', { title: 'Remove this filter', 'aria-label': `Remove ${names(k)}`, onclick: () => { this.leagues.delete(k); this.paint(); } }, icon('x', 12)))));
+    this.reset.hidden = !(this.q || nLg || this.oddsOnly);
     const addable = shown.filter(({ f }) => !this.coupon.has(f.home, f.away));
-    const filtered = this.leagues.size > 0 || this.q;
-    this.addAll.hidden = !(filtered && addable.length > 1 && addable.length <= 40);
-    this.addAll.textContent = `＋ Add all ${addable.length}`;
+    const narrowed = this.q || nLg || this.oddsOnly || this.win === 'today' || this.win === 'tomorrow';
+    this.addAll.hidden = !(narrowed && addable.length > 1 && addable.length <= 30);
+    this.addAll.replaceChildren(icon('plus', 14), `Add all ${addable.length}`);
 
     if (!shown.length) {
-      const msg = d.state === 'loading' ? 'Loading the odds feed…'
-        : all.length ? 'Nothing matches these filters. Widen the days or clear the search.'
-          : 'No fixtures in the odds feed right now (leagues on a break?). Add any match by name on the right.';
-      this.list.replaceChildren(h('div', { class: 'blank card' }, d.state === 'loading' ? h('span', { class: 'spin-sm' }) : '', ' ', msg));
+      const msg = d.state === 'loading' ? 'Loading fixtures and prices…'
+        : this.prepared().length ? 'No matches fit these filters.' : 'The odds feed has no fixtures right now. Leagues may be on a break.';
+      this.list.replaceChildren(h('div', { class: 'blank panel', style: { borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 0 } },
+        d.state === 'loading' ? h('span', { class: 'spin-sm' }) : '', ' ', msg,
+        !this.prepared().length || d.state === 'loading' ? '' : h('div', { style: { marginTop: '8px' } },
+          h('button', { class: 'link', onclick: () => this.resetFilters() }, 'Reset filters'),
+          this.win !== 'all' ? h('span', {}, ' · ', h('button', { class: 'link', onclick: () => this.setWindow('all') }, 'Show all days')) : '')));
       return;
     }
-    const byDay = new Map();
-    shown.forEach((x) => { if (!byDay.has(x.day)) byDay.set(x.day, []); byDay.get(x.day).push(x); });
     const blocks = [];
-    for (const [, xs] of byDay) {
-      blocks.push(h('div', { class: 'day' }, dayLabel(xs[0].ko.date), h('span', { class: 'faint' }, `  ${xs.length}`)));
-      blocks.push(h('div', { class: 'card fx-card' }, ...xs.map((x) => this.rowEl(x))));
+    if (this.sort === 'time') {
+      const byDay = new Map();
+      shown.forEach((x) => { if (!byDay.has(x.day)) byDay.set(x.day, []); byDay.get(x.day).push(x); });
+      let first = true;
+      for (const [, xs] of byDay) {
+        blocks.push(h('div', { class: 'day' }, h('b', {}, dayLabel(xs[0].ko.date)), `${xs.length} match${xs.length > 1 ? 'es' : ''}`));
+        blocks.push(h('div', { class: 'panel fx-table', style: first ? { borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 0 } : {} }, ...xs.map((x) => this.rowEl(x))));
+        first = false;
+      }
+    } else {
+      blocks.push(h('div', { class: 'panel fx-table', style: { borderTopLeftRadius: 0, borderTopRightRadius: 0, borderTop: 0 } }, ...shown.map((x) => this.rowEl(x, true))));
     }
     this.list.replaceChildren(...blocks);
     this.markAdded();
   }
 
-  // a row is rebuilt only when what it shows has changed
-  rowEl(x) {
+  rowEl(x, withDay = false) {
     const f = x.f;
-    const sig = JSON.stringify([f.probs, f.src, f.v1, f.v2, f.odds, f.pending, f.ou25, f.btts, x.started]);
+    const sig = JSON.stringify([f.probs, f.src, f.odds, f.pending, f.ou25, f.btts, f.score, x.started, withDay]);
     const hit = this.els.get(f.id);
     if (hit && hit.sig === sig) return hit.el;
-    const el = this.buildRow(x);
+    const el = this.buildRow(x, withDay);
     this.els.set(f.id, { el, sig });
     return el;
   }
 
-  buildRow({ f, ko, started }) {
+  buildRow({ f, ko, started }, withDay) {
     const time = ko.hasTime ? hhmm(ko.date) : '—';
-    const odds = f.odds ? `odds ${f.odds.map((o) => o.toFixed(2)).join(' / ')}` : null;
-    const goals = f.ou25 != null ? `O2.5 ${pct(f.ou25)} · BTTS ${pct(f.btts)}` : null;
-    const detail = [
-      h('span', { class: 'lg' }, f.league_name),
-      f.src ? badge(f.src) : '',
-      odds ? h('span', {}, odds) : '',
-      f.v2 ? h('span', { class: 'cmp' }, h('b', {}, 'v2 '), pct3(f.v2)) : '',
-      f.v1 ? h('span', { class: 'cmp' }, h('b', {}, 'v1 '), pct3(f.v1)) : '',
-      goals ? h('span', {}, goals) : '',
-    ].filter(Boolean);
-    const plus = h('button', { class: 'plus', 'aria-label': 'Add to coupon', onclick: (e) => { e.stopPropagation(); this.toggle(f); } }, h('span', { class: 'p-plus' }, '+'), h('span', { class: 'p-tick' }, '✓'));
-    const el = h('div', { class: 'frow', tabindex: 0, 'data-key': pairKey(f.home, f.away), title: 'Click for the full breakdown',
-      onclick: () => showDetails(f.home, f.away, this.coupon, { odds: f.odds }),
-      onkeydown: (e) => { if (e.key === 'Enter') showDetails(f.home, f.away, this.coupon, { odds: f.odds }); if (e.key === '+' || e.key === ' ') { e.preventDefault(); this.toggle(f); } } },
-    h('div', { class: 'ftime' }, time, started ? h('i', {}, 'started') : ''),
+    const dayShort = withDay ? ko.date.toLocaleDateString(undefined, { weekday: 'short' }) : '';
+    const top = f.probs ? f.probs.indexOf(Math.max(...f.probs)) : -1;
+    const num = (v, cls = '') => h('div', { class: `fnum num ${cls}` }, v == null ? '—' : Math.round(v * 100));
+    const src = SRC_TEXT[f.src] || f.src;
+    const meta = [h('span', {}, f.league_name)];
+    if (f.src) meta.push(h('span', { class: `src ${f.src === 'odds' ? 'odds' : ''}` }, ` · ${src}`));
+    if (f.odds) meta.push(h('span', { class: 'num' }, ` · ${f.odds.map((o) => o.toFixed(2)).join('  ')}`));
+    const add = h('button', { class: 'addbtn', 'aria-label': 'Add to coupon', title: 'Add to coupon',
+      onclick: (e) => { e.stopPropagation(); this.toggle(f); } }, icon('plus', 16, 'plusi'), icon('check', 16, 'tick'));
+    const open = () => showDetails(f.home, f.away, this.coupon, { odds: f.odds, ou_odds: f.ou_odds });
+    return h('div', { class: 'fgrid frow', tabindex: 0, 'data-key': pairKey(f.home, f.away), title: 'Open the full breakdown',
+      onclick: open,
+      onkeydown: (e) => { if (e.key === 'Enter') open(); if (e.key === ' ' || e.key === '+') { e.preventDefault(); this.toggle(f); } } },
+    h('div', { class: 'ftime num' }, withDay ? `${dayShort} ${time}` : time, started ? h('i', {}, 'started') : ''),
     h('div', { class: 'fmain' },
-      h('div', { class: 'fteams' }, h('span', {}, f.home_display), h('em', {}, '–'), h('span', {}, f.away_display)),
-      h('div', { class: 'fdetail' }, ...detail)),
-    f.probs ? outcomeTiles(f.probs, { src: f.src }) : h('div', { class: `tiles3 pending` }, ...['1', 'X', '2'].map((s) => h('div', { class: 't3 empty' }, h('b', {}, s), h('span', {}, '·')))),
-    plus);
-    return el;
+      h('div', { class: 'fteams' }, f.home_display, h('span', { class: 'vs' }, 'v'), f.away_display),
+      h('div', { class: 'fmeta' }, ...meta)),
+    ...CELLS.map((_, i) => num(f.probs?.[i], `${i === top ? 'top' : ''}${f.pending && !f.probs ? ' pending' : ''}`)),
+    num(f.ou25), num(f.btts),
+    h('div', { class: 'fnum num' }, f.score || '—', f.score ? h('span', { class: 'sub' }, `${Math.round(f.score_p * 100)}%`) : ''),
+    add);
   }
 
   markAdded() {
     for (const { el } of this.els.values()) {
       if (!el.isConnected) continue;
-      el.classList.toggle('added', this.coupon.rows.some((r) => r.complete && r.key === el.dataset.key));
+      const added = this.coupon.rows.some((r) => r.complete && r.key === el.dataset.key);
+      el.classList.toggle('added', added);
+      el.querySelector('.addbtn')?.setAttribute('title', added ? 'Remove from coupon' : 'Add to coupon');
     }
   }
 
@@ -178,38 +233,57 @@ export class FixturesView {
 
   addShown() {
     const todo = this.shown().map((x) => x.f).filter((f) => !this.coupon.has(f.home, f.away));
-    const run = () => { todo.forEach((f) => this.coupon.add(Coupon.fromFixture(f), { silent: true })); toast(`Added ${todo.length} matches (${this.coupon.n} on the coupon)`); };
+    const run = () => { todo.forEach((f) => this.coupon.add(Coupon.fromFixture(f), { silent: true })); toast(`Added ${todo.length} matches. The coupon has ${this.coupon.n}.`, { key: 'add' }); };
     if (this.coupon.n + todo.length > 15) {
-      modal('Add them all?', h('p', {}, `That would put ${this.coupon.n + todo.length} matches on the coupon — Spor Toto has 15. You can remove extras afterwards.`),
+      modal('Add all of them?', h('p', {}, `The coupon would have ${this.coupon.n + todo.length} matches. Spor Toto has 15. You can remove matches afterwards.`),
         [['Cancel'], [`Add ${todo.length}`, run, 'primary']]);
     } else run();
   }
 
+  // The league menu groups leagues by country, shows how many matches each has
+  // in the chosen days, and has one-click presets.
   leagueMenu(anchor) {
-    const rows = this.rows().filter((x) => { const t = new Date(); return x.day >= ymd(t) && x.day <= ymd(new Date(t.getFullYear(), t.getMonth(), t.getDate() + this.window)); });
+    const rows = this.prepared().filter((x) => this.inWindow(x));
     const counts = new Map();
     rows.forEach(({ f }) => counts.set(f.league, { name: f.league_name, n: (counts.get(f.league)?.n || 0) + 1 }));
-    const entries = [...counts.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name));
+    const country = (name) => name.split(' ')[0];
     const box = h('div', { class: 'popover pop-leagues' });
-    const q = textField({ placeholder: 'Find a league…' });
+    const q = textField({ placeholder: 'Find a league' });
     const list = h('div', { class: 'pop-list' });
     const draw = () => {
       const f = norm(q.input.value);
-      list.replaceChildren(...entries.filter(([, v]) => !f || norm(v.name).includes(f)).map(([k, v]) => {
-        const cb = h('input', { type: 'checkbox', checked: this.leagues.has(k) });
-        cb.addEventListener('change', () => { if (cb.checked) this.leagues.add(k); else this.leagues.delete(k); this.paint(); });
-        return h('label', { class: 'pop-item' }, cb, h('span', {}, v.name), h('span', { class: 'faint' }, String(v.n)));
-      }));
+      const groups = new Map();
+      [...counts.entries()].filter(([, v]) => !f || norm(v.name).includes(f)).forEach(([k, v]) => {
+        const c = country(v.name);
+        if (!groups.has(c)) groups.set(c, []);
+        groups.get(c).push([k, v]);
+      });
+      const out = [];
+      [...groups.keys()].sort().forEach((c) => {
+        out.push(h('div', { class: 'pop-group' }, c));
+        groups.get(c).sort((a, b) => a[1].name.localeCompare(b[1].name)).forEach(([k, v]) => {
+          const cb = h('input', { type: 'checkbox', checked: this.leagues.has(k) });
+          cb.addEventListener('change', () => { if (cb.checked) this.leagues.add(k); else this.leagues.delete(k); this.paint(); });
+          out.push(h('label', { class: 'pop-item' }, cb, h('span', {}, v.name.replace(`${c} `, '')), h('span', { class: 'faint num' }, String(v.n))));
+        });
+      });
+      list.replaceChildren(...(out.length ? out : [h('div', { class: 'blank' }, 'No league matches')]));
     };
     q.input.addEventListener('input', draw); draw();
-    box.append(q.wrap, list, h('div', { class: 'row end', style: { marginTop: '8px' } },
-      h('button', { class: 'btn sm', onclick: () => { this.leagues.clear(); this.paint(); box.remove(); } }, 'Clear'),
+    const presets = h('div', { class: 'row', style: { marginTop: '10px' } },
+      ...PRESETS.map(([label, ks]) => h('button', { class: 'btn sm', onclick: () => {
+        const have = ks.filter((k) => counts.has(k));
+        if (!have.length) { toast(`No ${label} matches in these days`); return; }
+        this.leagues = new Set(have); this.paint(); draw();
+      } }, label)));
+    box.append(q.wrap, presets, list, h('div', { class: 'row end', style: { marginTop: '10px' } },
+      h('button', { class: 'btn sm quiet', onclick: () => { this.leagues.clear(); this.paint(); draw(); } }, 'Clear'),
       h('button', { class: 'btn sm primary', onclick: () => box.remove() }, 'Done')));
     const r = anchor.getBoundingClientRect();
-    Object.assign(box.style, { position: 'fixed', left: `${Math.min(r.left, window.innerWidth - 320)}px`, top: `${r.bottom + 6}px` });
+    Object.assign(box.style, { left: `${Math.min(r.left, window.innerWidth - 360)}px`, top: `${r.bottom + 6}px` });
     document.body.append(box);
     q.input.focus();
-    const off = (e) => { if (!box.contains(e.target) && e.target !== anchor) { box.remove(); document.removeEventListener('mousedown', off); } };
+    const off = (e) => { if (!box.contains(e.target) && !anchor.contains(e.target)) { box.remove(); document.removeEventListener('mousedown', off); } };
     setTimeout(() => document.addEventListener('mousedown', off), 0);
   }
 }

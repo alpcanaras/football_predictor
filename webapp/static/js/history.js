@@ -1,6 +1,7 @@
 // History: saved tickets graded against real results.
 import { h, pct, modal, toast } from './ui.js';
 import { api } from './api.js';
+import { icon } from './icons.js';
 
 export class HistoryPage {
   constructor(root) { this.root = root; this.load(); }
@@ -17,32 +18,32 @@ export class HistoryPage {
       h('div', { class: 'tile' }, h('div', { class: 't' }, 'Reached a prize'), h('div', { class: 'v' }, `${s.cleared}/${s.completed}`)),
       h('div', { class: 'tile' }, h('div', { class: 't' }, 'Correct vs expected'), h('div', { class: 'v' }, s.completed ? `${s.correct} / ${s.expected.toFixed(1)}` : '—')));
     const body = d.entries.length ? d.entries.map((e) => this.card(e)) : [h('div', { class: 'card blank' },
-      'No saved tickets yet. Build one on the Build page and press “Save” — once the matches are played it grades itself, so you can see your real hit rate against what the model promised.')];
+      'No saved tickets yet. Build a ticket and press Save. After the matches are played, this page compares it with the real results.')];
     this.root.replaceChildren(
-      h('div', { class: 'page-head' }, h('h1', {}, 'History'), h('span', { class: 'small muted' }, '“Expected” is the honest benchmark: landing around it means the probabilities are calibrated and the rest is variance.')),
+      h('div', { class: 'page-head' }, h('h1', {}, 'History'), h('span', { class: 'small muted' }, '“Expected” is the fair benchmark. If the correct count stays near it, the probabilities are right and the rest is luck.')),
       tiles, ...body);
   }
 
   card(e) {
     const pending = e.graded < e.n;
     const won = e.threshold != null && e.correct >= e.threshold;
-    const prize = pending ? '⏳' : won ? '✅' : '—';
-    const del = h('button', { class: 'iconbtn', title: 'Delete', onclick: (ev) => { ev.preventDefault(); this.remove(e); } }, '🗑');
+    const prize = pending ? 'Pending' : won ? 'Prize' : 'No prize';
+    const del = h('button', { class: 'iconbtn sm', title: 'Delete', 'aria-label': 'Delete', onclick: (ev) => { ev.preventDefault(); this.remove(e); } }, icon('trash', 15));
     const rows = h('table', { class: 'simple' },
       h('tr', {}, h('th', {}, '#'), h('th', {}, 'Match'), h('th', {}, 'Played'), h('th', {}, 'Result'), h('th', { class: 'r' }, '1 · X · 2')),
       ...e.rows.map((r, i) => h('tr', {},
         h('td', {}, String(i + 1)), h('td', {}, `${r.home} – ${r.away}`), h('td', {}, h('b', {}, r.pick || '')),
         h('td', {}, r.actual ? h('span', { class: r.ok ? 'okmark' : 'badmark' }, `${r.actual} ${r.ok ? '✓' : '✗'}`) : h('span', { class: 'faint' }, 'pending')),
         h('td', { class: 'r' }, r.p.map((x) => (x == null ? '—' : Math.round(x * 100))).join(' · ')))));
-    return h('details', { class: 'card hcard' },
+    return h('details', { class: 'panel hcard' },
       h('summary', {},
         h('span', {}, (e.saved_at || '').replace('T', ' ').slice(0, 16)),
-        h('span', {}, `${e.flag || ''} ${e.label}`),
+        h('span', {}, e.label),
         h('span', { class: 'muted small' }, e.note || e.kind || ''),
         h('span', {}, `${e.columns} col · said ${pct(e.p_threshold, 1)}`),
         h('span', {}, `${e.correct}/${e.graded}${pending ? ` of ${e.n}` : ''} · exp ${e.expected.toFixed(1)}`),
         h('span', {}, prize), del),
-      h('div', { class: 'card-pad' }, rows));
+      h('div', { style: { padding: '10px 14px' } }, rows));
   }
 
   remove(e) {

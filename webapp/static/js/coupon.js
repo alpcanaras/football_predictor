@@ -25,7 +25,7 @@ export class Row {
   }
   get complete() { return !!(this.home.trim() && this.away.trim()); }
   analysisKey() {
-    return `${norm(this.home)}|${norm(this.away)}|${this.odds ? this.odds.join(',') : ''}|${store.status?.model_mode}`;
+    return `${norm(this.home)}|${norm(this.away)}|${this.odds ? this.odds.join(',') : ''}`;
   }
   probs() { return this.an?.probs || UNIFORM; }
   // identity independent of home/away order and of how the name was typed
@@ -47,7 +47,7 @@ export function describe(n) {
   if (n === 0) return { n, state: 'empty', title: 'Your coupon is empty', hint: `Add matches from the list. 13 plays as the ${g13.label}, 15 as ${g15.label}.` };
   if (n === g13.n || n === g15.n) {
     const g = n === g13.n ? g13 : g15;
-    return { n, state: 'ok', game: g, title: `${g.flag} ${g.label}`, hint: `Prize at ${n - wrong}+ correct of ${n}` };
+    return { n, state: 'ok', game: g, title: g.label, hint: `Prize at ${n - wrong}+ correct of ${n}` };
   }
   if (n < g13.n) return { n, state: 'partial', title: `${n} match${n > 1 ? 'es' : ''}`, hint: `${g13.n - n} more for the ${g13.label} · ${g15.n - n} for ${g15.label}` };
   if (n === 14) return { n, state: 'between', title: '14 matches', hint: `1 more → ${g15.label} · or remove 1 → ${g13.label}` };
@@ -201,11 +201,6 @@ export class Coupon {
     this.emit('row'); this.retick();
   }
 
-  reanalyzeModelRows() {            // the model changed: odds-priced rows are unaffected
-    this.cache.clear();
-    this.rows.forEach((r) => { if (r.an?.src !== 'odds') this.analyze(r, true); });
-  }
-
   async confirmName(row, side, canonical) {
     const typed = row[side];
     try { await api.post('/api/names/remember', { typed, canonical }); } catch { /* best effort */ }
@@ -250,8 +245,8 @@ export class Coupon {
     return {
       home: f.home, away: f.away, odds: f.odds,
       an: known ? {
-        home: f.home, away: f.away, probs: f.probs, src: f.src, v1: f.v1, v2: f.v2, market: f.market,
-        league_name: f.league_name,
+        home: f.home, away: f.away, probs: f.probs, src: f.src, market: f.market, model: f.model,
+        ou25: f.ou25, btts: f.btts, score: f.score, score_p: f.score_p, xg: f.xg, league_name: f.league_name,
         sides: { home: { canonical: f.home, display: f.home_display, kind: 'club', how: 'exact', suggest: [] },
           away: { canonical: f.away, display: f.away_display, kind: 'club', how: 'exact', suggest: [] } },
       } : null,

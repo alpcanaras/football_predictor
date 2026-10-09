@@ -153,6 +153,19 @@ def job(_r, _b):
     return ENGINE.job()
 
 
+_PING = {'t': time.time(), 'seen': False}
+
+
+def ping(_r, _b):
+    _PING['t'], _PING['seen'] = time.time(), True
+    return {'ok': True}
+
+
+def quit_app(_r, _b):
+    threading.Thread(target=lambda: (time.sleep(0.3), os._exit(0)), daemon=True).start()
+    return {'ok': True}
+
+
 async def index(_request):
     return FileResponse(os.path.join(STATIC, 'index.html'),
                         headers={'Cache-Control': 'no-store'})
@@ -180,6 +193,8 @@ routes = [
     Route('/api/history/{id}', api(delete_history), methods=['DELETE']),
     Route('/api/jobs/{kind}', api(start_job), methods=['POST']),
     Route('/api/jobs', api(job)),
+    Route('/api/ping', api(ping), methods=['POST']),
+    Route('/api/quit', api(quit_app), methods=['POST']),
     Mount('/static', FreshStatic(directory=STATIC), name='static'),
 ]
 
