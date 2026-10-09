@@ -5,6 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Football Predictor</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚽</text></svg>">
+  <meta name="color-scheme" content="dark light">
+  <script>
+    // Apply the saved theme before anything paints (no light flash): Dark unless
+    // the viewer chose Light, or Auto to follow the system.
+    (function () {
+      var t = 'dark';
+      try { t = localStorage.getItem('fp.theme') || 'dark'; } catch (e) { /* private mode */ }
+      var dark = t === 'dark' || (t === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    })();
+  </script>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -15,6 +26,7 @@
       <a href="#/history" data-page="history">📈 History</a>
     </nav>
     <div class="top-right">
+      <button class="pill themebtn" id="theme-btn" title="Theme"></button>
       <button class="pill" id="data-pill" aria-haspopup="dialog">Data…</button>
     </div>
   </header>
