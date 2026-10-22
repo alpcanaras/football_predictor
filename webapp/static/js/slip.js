@@ -410,9 +410,9 @@ export class SlipView {
     area.replaceChildren(
       h('h2', {}, `${info.state === 'ok' ? info.title : `${lines.length} matches`}: ${r?.columns || 1} columns`),
       h('p', {}, `Chance of a prize ${pct(r?.p_prize, 2)} · printed ${new Date().toLocaleString()}`),
-      h('table', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Match'), h('th', {}, 'Play')),
+      h('table', {}, h('tr', {}, h('th', {}, '#'), h('th', {}, 'Match'), ...LABELS.map((s) => h('th', { class: 'c' }, s))),
         ...lines.map((l) => h('tr', {}, h('td', {}, String(l.i)), h('td', {}, `${l.home} - ${l.away}`),
-          h('td', {}, ...LABELS.map((s) => h('span', { class: `box${l.play.includes(s) ? ' x' : ''}` }, s)))))));
+          ...LABELS.map((s) => h('td', { class: 'c' }, h('span', { class: `pbox${l.play.includes(s) ? ' on' : ''}` })))))));
     window.print();
   }
 

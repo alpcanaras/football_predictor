@@ -355,12 +355,21 @@ table.simple td.r, table.simple th.r { text-align: right; }
 
 /* ------------------------------------------------------------------- print */
 .print-area { display: none; }
+@page { margin: 14mm; }
 @media print {
-  body { background: #fff; color: #000; }
+  html, body { background: #fff !important; color: #000; }
   .topbar, #toasts, .popover, main { display: none !important; }
   .print-area { display: block !important; }
-  .print-area table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .print-area th, .print-area td { border: 1px solid #999; padding: 5px 8px; }
-  .print-area .box { display: inline-block; width: 18px; height: 18px; border: 1.5px solid #000; text-align: center; line-height: 16px; font-weight: 700; margin-right: 4px; }
-  .print-area .box.x { background: #000; color: #fff; }
+  .print-area h2 { margin: 0 0 4px; font-size: 18px; }
+  .print-area p { margin: 0 0 10px; font-size: 12px; }
+  .print-area table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .print-area th, .print-area td { border: 1px solid #000; padding: 6px 8px; text-align: left; }
+  .print-area th.c, .print-area td.c { width: 56px; padding: 4px 0; text-align: center; }
+  .print-area th.c { font-size: 16px; }
+  .print-area tr { break-inside: avoid; }
+  /* One box per column: 1, X, 2. A played box is solid black. It is drawn with a
+     thick border because browsers skip backgrounds unless "Background graphics"
+     is switched on, and borders always print. */
+  .print-area .pbox { display: inline-block; box-sizing: border-box; width: 24px; height: 24px; border: 2px solid #000; vertical-align: middle; }
+  .print-area .pbox.on { border-width: 12px; background: #000; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
