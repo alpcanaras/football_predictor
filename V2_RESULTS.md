@@ -202,6 +202,39 @@ Test windows 2024–26, 33,101 matches:
 - Price-inversion rating rule: tied with k=260 (1.00320 vs 1.00312),
   including on teams with fewer than 8 priced games.
 - Blending into the market: see above.
+- Learning from the gaps between the goals model, the 1X2 model and the
+  price: no gain (see the market checks below).
+
+## Market checks (2026-10-23, `scripts/v2_market_checks.py`)
+
+The live feed gives **early** prices (collected a few days before kickoff),
+but "odds win" was set against closing prices. These checks redo it against
+the early price. Weights are fitted on 2022–23 and judged on 2024–26
+(20,387 matches). Gain is in log-loss against the early average price.
+A positive gain is better.
+
+| Test 2024–26 | Gain vs early price |
+|---|---|
+| Closing price (not available live) | **+0.0030** [+0.0020, +0.0042] |
+| 1X2 model alone | −0.0047 |
+| Goals model 1X2 alone | −0.0072 |
+| Pool early/1X2/goals (fitted 0.83/0.49/−0.32) | −0.0000 [−0.0005, +0.0004] |
+| Gap-learner (logistic regression on the gaps, best C) | +0.0002 [−0.0002, +0.0006] |
+| O/U: app's pool (0.118 goals + 1.106 price) | −0.0000 [−0.0005, +0.0005] |
+| Other early sources: B365, BV, BFD, Max | within ±0.0002 of Avg |
+| Betfair Exchange early (BFE) | −0.0043 (thin early markets) |
+
+- **Line movement:** the closing price moves toward the model by about 10% of
+  the model–early gap (slope +0.10, correlation +0.13 for H, D and A).
+  The model knows a little that the early price does not. This is far too
+  little to beat the bookmaker margin: median 6.9% on the average price,
+  2.7% on the best price across books.
+- **Draws:** draws beat the early price by +0.97 pp in 2024–26, but only by
+  +0.19 pp in 2022–23. A correction fitted on 2022–23 gains +0.0001. The
+  goals model's draw view does not point to the extra draws.
+- **Conclusion:** keep "odds win" with the average early price, and keep the
+  O/U pool. The one large gap is fresher odds: closing beats early by 0.003,
+  which is more than any model adds.
 
 ## Caveats
 
