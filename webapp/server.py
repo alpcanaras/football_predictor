@@ -158,6 +158,7 @@ _PING = {'t': time.time(), 'seen': False}
 
 def ping(_r, _b):
     _PING['t'], _PING['seen'] = time.time(), True
+    ENGINE.keep_fresh()                 # a page is open: is the data still current?
     return {'ok': True}
 
 

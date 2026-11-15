@@ -50,7 +50,8 @@ GAMES = [  # (matches, label, flag, prize_from)
 ]
 FIXTURE_DAYS = 14
 FIXTURE_TTL = 15 * 60
-UPDATE_EVERY_H = 12                    # the packaged app refreshes data this often
+UPDATE_EVERY_H = 12                    # automatic update: when the data is older than this
+UPDATE_RETRY_MIN = 30                  # ... and after a failed try, wait this long
 SRC_LABEL = {'odds': 'odds', 'model': 'model', 'national': 'nations', 'euro': 'club elo'}
 
 
@@ -102,6 +103,7 @@ class Engine:
         self._fx_lock = threading.Lock()
         self._job = {'running': False, 'kind': None, 'log': '', 'ok': None,
                      'started': None, 'finished': None}
+        self._auto_wait = 0.0              # no automatic update before this time
 
     # ------------------------------------------------------------------ load
     def load(self) -> None:
@@ -510,11 +512,22 @@ class Engine:
         return {'ok': track.delete_coupon(entry_id)}
 
     # ------------------------------------------------------------ data jobs
+    def keep_fresh(self) -> None:
+        """Called while a page is open (it pings every 15 s). Start-up is not
+        the only moment to look: a server left running for weeks must refresh
+        its data too, or the page shows old form and old tables as current."""
+        if self.state == 'ready':
+            self._maybe_auto_update()
+
     def _maybe_auto_update(self) -> None:
-        if not self.auto_update_on() or self._job['running']:
+        if (not self.auto_update_on() or self._job['running']
+                or time.time() < self._auto_wait):
             return
         last = self.settings().get('last_update')
         if last is None or time.time() - float(last) > UPDATE_EVERY_H * 3600:
+            # a run that fails (offline) leaves last_update old: do not start
+            # another one on the next ping
+            self._auto_wait = time.time() + UPDATE_RETRY_MIN * 60
             self.start_job('all')
 
     def start_job(self, kind: str) -> dict:
