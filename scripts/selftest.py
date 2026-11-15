@@ -500,6 +500,29 @@ def check_v2_serving(quick: bool) -> None:
            + (f' — misrouted: {bad}' if bad else ''))
 
 
+def check_live_seasons() -> None:
+    """A live fixture must fall in the season its league is playing right now.
+    Training reads the season from the data file; live prediction has to work
+    it out. If the two differ (Japan left the calendar year in 2026), every
+    team looks like it has played no game this season and both ratings are
+    pulled toward the mean — silently, for that league only."""
+    from scripts import research_features as rf
+    raw, _ = rf.load_raw()
+    newest = raw.sort_values('Date').groupby('league').tail(1).set_index('league')
+    state = rf.FeatureState()
+    for (lg, name), d in raw.groupby(['league', 'HomeTeam']):
+        t = state.teams.setdefault((lg, name), rf.Team())
+        last = d.iloc[d.Date.argmax()]
+        t.season, t.last_date = last.SeasonId, last.Date
+    bad = {}
+    for lg, row in newest.iterrows():
+        got = state._fixture_season(lg, row.Date + pd.Timedelta(days=1))
+        if got != row.SeasonId:
+            bad[lg] = f'{got} (file: {row.SeasonId})'
+    record(PASS if not bad else FAIL, 'live fixtures use the season the data is in',
+           f'{len(newest)} leagues' if not bad else f'wrong season for {bad}')
+
+
 # ---------------------------------------------------------- 6. internationals
 def check_international() -> None:
     from scripts import international as intl
@@ -721,6 +744,7 @@ def main() -> int:
     check_tracker()
     check_models(args.quick)
     check_v2_serving(args.quick)
+    check_live_seasons()
     check_international()
     if not args.quick:
         check_app()

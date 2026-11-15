@@ -195,11 +195,32 @@ class FeatureState:
         return (1500 + self.season_retention * (team.rating - 1500)
                 if team.season is not None and team.season != season else team.rating)
 
+    def _fixture_season(self, league, day, supplied=None):
+        """Season of a fixture. A replayed match carries the season from its
+        file. A live fixture carries none, so it follows the notation of the
+        league's newest matches in this state ('2026' or '2026/2027'). That
+        notation is what the state was built from, and the provider can
+        change it: Japan moved to an autumn-spring season in 2026, and a fixed
+        list of calendar-year leagues then names a season no team is in."""
+        if supplied is not None and pd.notna(supplied):
+            return season_id(league, day, supplied)
+        newest = None
+        for (lg, _), team in self.teams.items():
+            if lg == league and team.season is not None and (
+                    newest is None or team.last_date > newest.last_date):
+                newest = team
+        if newest is None:
+            return season_id(league, day)
+        if '/' in newest.season:
+            start = day.year if day.month >= 7 else day.year - 1
+            return f'{start}/{start + 1}'
+        return str(day.year)
+
     def fixture(self, row):
         day, league = pd.Timestamp(row['Date']).normalize(), row['league']
         if self.last_day is not None and day <= self.last_day:
             raise ValueError('Fixture must be after every completed day in state')
-        season = season_id(league, day, row.get('SeasonId'))
+        season = self._fixture_season(league, day, row.get('SeasonId'))
         h, a = self._team(league, row['HomeTeam']), self._team(league, row['AwayTeam'])
         result = {'EloDiff': self._rating(h, season) - self._rating(a, season)}
         for prefix, team, venue in [('Home', h, h.home), ('Away', a, a.away)]:
