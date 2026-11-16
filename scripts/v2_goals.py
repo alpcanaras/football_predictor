@@ -141,6 +141,110 @@ def tilt_grid(g: np.ndarray, p1x2=None, ou25=None, btts=None, iters: int = 80,
 
 
 # =============================================================================
+# THE GRID THE APP SERVES
+# =============================================================================
+# Two things measured on matches no model had seen (scripts/v2_grid_calib.py,
+# V2_RESULTS.md), both applied before the tilt above:
+#   * The 1X2 odds also say how many goals the bookmakers expect: a short draw
+#     price means few goals. The pair of Poisson rates that reproduces the 1X2
+#     odds, mixed with the model grid, finds scores better than the model grid
+#     alone — and prices a pair no model knows from its odds alone.
+#   * Every Poisson grid spreads the winning margin too wide. One-goal wins
+#     happen more often, and wins by two or more less often, than it says;
+#     among draws it favours 0-0 too much. Nine multipliers correct the shape.
+ODDS_RHO = -0.04                       # low-score correction of the odds grid
+_D = _I - _J
+SHAPE_GROUPS = {'H+1': _D == 1, 'H+2': _D == 2, 'H+3': _D >= 3,
+                'A+1': _D == -1, 'A+2': _D == -2, 'A+3': _D <= -3,
+                '0-0': (_D == 0) & (_I == 0), '1-1': (_D == 0) & (_I == 1),
+                '2-2+': (_D == 0) & (_I >= 2)}
+_SHAPE_ID = np.zeros(_I.shape, int)
+for _k, _mask in enumerate(SHAPE_GROUPS.values()):
+    _SHAPE_ID[_mask] = _k
+
+
+def rates_from_1x2(p1x2, rho: float = ODDS_RHO) -> np.ndarray:
+    """(n, 2) home and away goal rates: for each [home, draw, away] row, the
+    pair of Poisson rates whose scoreline grid gives that 1X2. Two unknowns
+    and two free numbers, so the fit is exact wherever a Poisson grid can
+    reach; rows with a missing value come back NaN."""
+    from scipy.optimize import least_squares
+    p = np.atleast_2d(np.asarray(p1x2, float))
+    out = np.full((len(p), 2), np.nan)
+    lo, hi = np.log(.05), np.log(8.0)
+    for i, t in enumerate(p):
+        if not np.isfinite(t).all():
+            continue
+        t = t / t.sum()
+
+        def miss(x, t=t):
+            m = grid_markets(grid(np.exp(x[:1]), np.exp(x[1:]), rho))
+            return [m['pH'][0] - t[0], m['pD'][0] - t[1], m['pA'][0] - t[2]]
+        out[i] = np.exp(least_squares(miss, x0=np.log([1.45, 1.15]), bounds=(lo, hi)).x)
+    return out
+
+
+def shape_matrix(theta) -> np.ndarray:
+    """(G+1, G+1) multipliers from the nine log-multipliers, in the order of
+    SHAPE_GROUPS. Only ratios inside one result matter: the tilt that follows
+    fixes how much each result gets."""
+    return np.exp(np.asarray(theta, float))[_SHAPE_ID]
+
+
+def serve(model_grid, p1x2, ou25=None, odds_rates=None, calib: dict | None = None) -> np.ndarray:
+    """The grids as served, for n matches at once.
+
+    model_grid  (n, G+1, G+1) from the goals model, or None: no model knows
+                these pairs, so the odds alone make the grid
+    p1x2        (n, 3) the final [home, draw, away] the grid has to agree with
+    ou25        (n,) P(over 2.5) from over/under odds, or None
+    odds_rates  (n, 2) from rates_from_1x2() when p1x2 comes from odds, else None
+    calib       models/v2/grid_calibration.json as a dict, or None. Without it
+                this is the plain tilt of the model grid, as before it existed.
+    """
+    on = bool(calib) and calib.get('enabled', True)
+    rho = float((calib or {}).get('rho', ODDS_RHO))
+    odds_g = None if odds_rates is None else grid(np.asarray(odds_rates, float)[:, 0],
+                                                    np.asarray(odds_rates, float)[:, 1], rho)
+    if model_grid is None:
+        if odds_g is None:
+            raise ValueError('no model grid and no odds: nothing to make a grid from')
+        seed, mode = odds_g, 'nomodel'
+    elif on and odds_g is not None:
+        w = float(calib.get('weight_model', 1.0))
+        seed = np.exp(w * np.log(np.clip(np.asarray(model_grid, float), 1e-300, None))
+                      + (1 - w) * np.log(np.clip(odds_g, 1e-300, None)))
+        seed, mode = seed / seed.sum(axis=(1, 2), keepdims=True), 'odds'
+    else:
+        seed, mode = np.asarray(model_grid, float), 'model'
+    if on:
+        theta = calib.get('theta', {}).get(mode + ('_ou' if ou25 is not None and mode != 'model' else ''))
+        if theta is not None:
+            seed = seed * shape_matrix(theta)[None]
+    return tilt_grid(seed, p1x2, ou25)
+
+
+def fit_shape(seed, p1x2, ou25, home_goals, away_goals, iters: int = 25, damp: float = .7) -> np.ndarray:
+    """The nine log-multipliers that make the served grids share out each
+    result the way the matches did: of all home wins, the part won by one
+    goal, by two, by three or more; the same for away wins; and of all draws,
+    the part that ended 0-0, 1-1, or higher. (How much each result gets is
+    fixed by the tilt, so only these shares can be fitted.) Each pass tilts
+    with the current multipliers and moves them by the log of actual over
+    expected, like the tilt itself but over all matches at once."""
+    hi, ai = np.minimum(np.asarray(home_goals, int), G), np.minimum(np.asarray(away_goals, int), G)
+    masks = list(SHAPE_GROUPS.values())
+    actual = np.array([m[hi, ai].sum() for m in masks], float)
+    theta = np.zeros(len(masks))
+    for _ in range(iters):
+        s = tilt_grid(seed * shape_matrix(theta)[None], p1x2, ou25)
+        theta += damp * np.log(actual / np.array([s[:, m].sum() for m in masks]))
+    for a in range(0, len(masks), 3):                 # readable: first group of each result = 1
+        theta[a:a + 3] -= theta[a]
+    return theta
+
+
+# =============================================================================
 # MODEL
 # =============================================================================
 def _xgb(kind: str, params: dict):

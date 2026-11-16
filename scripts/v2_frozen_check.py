@@ -10,8 +10,9 @@ It scores, on the same matches:
     1X2       the frozen ensemble against the early price (what the live feed
               carries) and the closing price
     goals     over/under 2.5 against the over/under price; both-teams-score;
-              the scoreline grid (plain, and tilted to the price as the app
-              serves it) against league score frequencies
+              the scoreline grid as the app serves it (scripts/v2_goals.serve
+              with models/v2/grid_calibration.json) against the plain tilt it
+              served before, and against league score frequencies
 
     python -m scripts.v2_frozen_check                  # since the freeze
     python -m scripts.v2_frozen_check --since 2026-10-15
@@ -30,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 import pandas as pd
 
-from scripts import v2_bundle
+from scripts import v2_bundle, v2_grid_calib
 from scripts import v2_goals as vg
 from scripts import v2_train as v2
 
@@ -130,7 +131,7 @@ def run(since: str | None = None) -> dict:
           f'{_ll_bin(base_b, yb).mean():.5f} | model gain {d:+.5f} [{lo:+.5f}, {hi:+.5f}]')
     out['goals']['btts'] = {'model': float(_ll_bin(mk['btts'], yb).mean()), 'gain_vs_base': d, 'ci': [lo, hi]}
 
-    # ---- scoreline grid, as served: tilted to the price where there is one
+    # ---- scoreline grid, as served: with the price where there is one
     hi_, ai_ = vg._actual_cells(test)
     cell = lambda g: -np.log(np.clip(g[np.arange(len(test)), hi_, ai_], 1e-12, None))
     prior = vg.league_prior(past[past.Date >= start - pd.Timedelta(days=1460)], test)
@@ -138,21 +139,44 @@ def run(since: str | None = None) -> dict:
     close = _cols(test, 't_avg_close')
     price = np.where(np.isfinite(pre).all(axis=1, keepdims=True), pre, close)
     has = np.isfinite(price).all(axis=1)
-    ou_pre, ou_close = _ou_price(test, 'Avg>2.5', 'Avg<2.5'), _ou_price(test, 'AvgC>2.5', 'AvgC<2.5')
-    ou = np.where(np.isfinite(ou_pre), ou_pre, ou_close)
-    ou = np.where(np.isfinite(ou), ou, mk['ou25'])
-    served = grid.copy()
-    served[has] = vg.tilt_grid(grid[has], price[has], ou[has])
+    ou = _ou_price(test, 'Avg>2.5', 'Avg<2.5')            # the app only ever has early O/U odds
+    calib = v2_grid_calib.load_calibration()
+    rates = vg.rates_from_1x2(price)
+    old_grid, new_grid, odds_grid = grid.copy(), grid.copy(), grid.copy()
+    for with_ou in (True, False):                          # two groups: tilt targets differ
+        rows = has & (np.isfinite(ou) == with_ou)
+        if not rows.any():
+            continue
+        o = ou[rows] if with_ou else None
+        old_grid[rows] = vg.tilt_grid(grid[rows], price[rows], o)
+        new_grid[rows] = vg.serve(grid[rows], price[rows], o, rates[rows], calib)
+        odds_grid[rows] = vg.serve(None, price[rows], o, rates[rows], calib)
+    mp = p / p.sum(axis=1, keepdims=True)                  # without a price: the model's own 1X2
+    none = ~has
+    if none.any():
+        old_grid[none] = vg.tilt_grid(grid[none], mp[none])
+        new_grid[none] = vg.serve(grid[none], mp[none], None, None, calib)
     print(f'\n  correct score (log-loss over the scoreline; top-1 = most likely score was right)')
-    base = cell(prior)
-    out['score'] = {}
-    for label, g in (('league score frequencies', prior), ('model grid', grid),
-                     ('grid tilted to the price (served)', served)):
+    print(f"  grid calibration: {'on' if calib else 'OFF (models/v2/grid_calibration.json missing or disabled)'}")
+    base = cell(old_grid)
+    out['score'] = {'calibration': bool(calib)}
+    for label, g in (('league score frequencies', prior), ('model grid, not tilted', grid),
+                     ('served before: plain tilt to the price', old_grid),
+                     ('served now', new_grid), ('odds alone, as for an unknown pair', odds_grid)):
         l = cell(g)
         top = (g.reshape(len(test), -1).argmax(1) == hi_ * (vg.G + 1) + ai_).mean()
         d, lo, hi, _ = boot(base - l, test.Date)
-        print(f'    {label:<34} {l.mean():.4f}   top-1 {top:.3f}   gain vs frequencies {d:+.4f} [{lo:+.4f}, {hi:+.4f}]')
-        out['score'][label] = {'ll': float(l.mean()), 'top1': float(top), 'gain': d, 'ci': [lo, hi]}
+        print(f'    {label:<40} {l.mean():.4f}   top-1 {top:.3f}   gain vs served before {d:+.4f} [{lo:+.4f}, {hi:+.4f}]')
+        out['score'][label] = {'ll': float(l.mean()), 'top1': float(top), 'gain_vs_before': d, 'ci': [lo, hi]}
+    yb_ = yb
+    tot = vg._I + vg._J
+    print(f'\n  other markets read off the served grid (gain vs served before; positive is better)')
+    for label, mask, y in (('both teams score', (vg._I > 0) & (vg._J > 0), yb_), ('over 1.5', tot >= 2, (test.FTHG + test.FTAG >= 2).to_numpy(int)),
+                           ('over 2.5', tot >= 3, yo), ('over 3.5', tot >= 4, (test.FTHG + test.FTAG >= 4).to_numpy(int))):
+        a, b = _ll_bin(old_grid[:, mask].sum(axis=1), y), _ll_bin(new_grid[:, mask].sum(axis=1), y)
+        d, lo, hi, _ = boot(a - b, test.Date)
+        print(f'    {label:<40} {b.mean():.5f}   gain {d:+.5f} [{lo:+.5f}, {hi:+.5f}]')
+        out['goals'][f'served {label}'] = {'ll': float(b.mean()), 'gain_vs_before': d, 'ci': [lo, hi]}
     return out
 
 

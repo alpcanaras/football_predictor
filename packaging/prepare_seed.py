@@ -39,6 +39,9 @@ def main() -> str:
         shutil.copy(os.path.join(mdir, marker), os.path.join(out_m, marker))
     for tag in keep:
         shutil.copytree(os.path.join(mdir, tag), os.path.join(out_m, tag))
+    calib = os.path.join(mdir, 'grid_calibration.json')        # the score grid's corrections
+    if os.path.isfile(calib):
+        shutil.copy(calib, os.path.join(out_m, 'grid_calibration.json'))
     try:
         head = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], cwd=ROOT, text=True).strip()
     except Exception:
