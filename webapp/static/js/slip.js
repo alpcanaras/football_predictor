@@ -146,7 +146,7 @@ export class SlipView {
       crowd.set(row.crowd ? row.crowd.map((x) => Math.round(x)).join('/') : '');
     } });
     const idx = h('div', { class: 'sidx num' });
-    const info = h('button', { class: 'iconbtn sm', title: 'Open the full breakdown', 'aria-label': 'Open the full breakdown', onclick: () => showDetails(row.home, row.away, this.c, { odds: row.odds }) }, icon('info', 15));
+    const info = h('button', { class: 'iconbtn sm', title: 'Open the full breakdown', 'aria-label': 'Open the full breakdown', onclick: () => showDetails(row.home, row.away, this.c, { odds: row.odds, neutral: row.neutral }) }, icon('info', 15));
     const el = h('div', { class: 'srow' }, idx,
       h('div', { class: 'steams' }, home.wrap, away.wrap),
       h('div', { class: 'spicks' }, ...picks),
@@ -180,15 +180,29 @@ export class SlipView {
     v.detail.replaceChildren(...bits);
     v.el.title = a?.league_name || '';
     const chips = [];
+    let unknown = false;
     for (const side of ['home', 'away']) {
       const s = sides[side];
       if (!a || !s) continue;
       if (!s.canonical) {
-        chips.push(h('span', {}, `“${row[side]}” is not recognised`), s.suggest?.length ? h('span', {}, ' Did you mean:') : h('span', {}, ' Add odds for this match.'),
+        unknown = true;
+        chips.push(h('span', {}, `“${row[side]}” is not recognised.`), s.suggest?.length ? h('span', {}, ' Did you mean:') : '',
           ...(s.suggest || []).map((o) => h('button', { class: 'sugchip', title: o.league_name, onclick: () => this.c.confirmName(row, side, o.name) }, o.display)));
       } else if (s.how === 'fuzzy') {
         chips.push(h('span', {}, `“${row[side]}” looks like`), h('button', { class: 'sugchip', onclick: () => this.c.confirmName(row, side, s.canonical) }, `${s.display} · confirm`));
       }
+    }
+    // a pair no model knows is still priced when it has odds
+    if (a && a.kind === 'odds') chips.push(h('span', {}, unknown ? ' The numbers come from the odds alone.' : 'No model knows this pair. The numbers come from the odds alone.'));
+    else if (a && !a.probs && row.complete && !row.busy) chips.push(h('span', {}, unknown ? ' Add odds to price this match.' : 'No model knows this pair. Add odds to price it.'));
+    if (a?.old) {
+      const when = (d) => new Date(`${d}T12:00:00`).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+      const who = Object.entries(a.old).map(([side, d]) => `${side === 'home' ? row.homeDisplay : row.awayDisplay} (last match ${when(d)})`).join(', ');
+      chips.push(h('span', { class: 'warnchip', title: (a.notes || []).join(' ') }, `Old data: ${who}.${row.odds ? '' : ' Add odds.'}`));
+    }
+    if (a?.kind === 'national') {
+      chips.push(h('button', { class: 'sugchip', title: 'National teams: is the match at the home side, or on neutral ground (a final tournament)?',
+        onclick: () => this.c.edit(row, { neutral: !row.neutral }) }, row.neutral ? 'Neutral ground · change' : `Home advantage: ${row.homeDisplay} · change`));
     }
     v.sug.replaceChildren(...chips);
   }

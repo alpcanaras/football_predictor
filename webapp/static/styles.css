@@ -353,6 +353,8 @@ table.simple tr:last-child td { border-bottom: 0; }
 table.simple td.r, table.simple th.r { text-align: right; }
 @media (max-width: 900px) { .tiles { grid-template-columns: repeat(2, 1fr); } .hcard summary { grid-template-columns: 1fr 1fr; } }
 
+.warnchip { color: var(--warn); font-weight: 600; }
+
 /* ------------------------------------------------------------------- print */
 .print-area { display: none; }
 @page { margin: 14mm; }

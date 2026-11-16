@@ -216,7 +216,8 @@ class Engine:
                 if all(pd.notna(r.get(c)) for c in ('o1', 'ox', 'o2')) else None
             extra = per.get(row_key(r['home'], r['away']), {})
             rows.append({'home': str(r['home']), 'away': str(r['away']), 'odds': odds,
-                         'crowd': extra.get('crowd'), 'lock': extra.get('lock')})
+                         'crowd': extra.get('crowd'), 'lock': extra.get('lock'),
+                         'neutral': bool(extra.get('neutral'))})
         return {'rows': rows, 'budget': int(meta.get('budget', 1)),
                 'tilt': float(meta.get('tilt', ticket_mod.DEFAULT_TILT)),
                 'objective': meta.get('objective', 'hit'),
@@ -238,6 +239,8 @@ class Engine:
                 extra['crowd'] = [float(x) for x in r['crowd']]
             if r.get('lock') in ticket_mod.MASK_LABEL.values():
                 extra['lock'] = r['lock']
+            if r.get('neutral'):
+                extra['neutral'] = True
             if extra:
                 per[row_key(home, away)] = extra
         _atomic_write(COUPON_FILE, '\n'.join(lines))
@@ -285,17 +288,38 @@ class Engine:
             'btts': r.get('btts'), 'xg': r.get('xg'),
             'score': (r.get('scores') or [{}])[0].get('score'),
             'score_p': (r.get('scores') or [{}])[0].get('p'),
+            'kind': r.get('kind'), 'old': r.get('old_data'), 'neutral': r.get('neutral'),
+            'notes': r.get('notes') or [],
         }
 
-    def analyze_row(self, home: str, away: str, odds=None) -> dict:
+    def _in_feed(self, home: str, away: str) -> dict | None:
+        """The priced fixture for this pair, home and away the same way round,
+        if the odds feed lists it. A coupon row then gets the same match day
+        and over/under odds as the fixtures list, so the two always agree."""
+        sh, sa = self.pred._sides(home, away)
+        if not sh['canonical'] or not sa['canonical']:
+            return None
+        for r in self.fx.get('rows') or []:
+            if r['home'] == sh['canonical'] and r['away'] == sa['canonical']:
+                return r
+        return None
+
+    def _predict(self, home, away, odds=None, ou_odds=None, neutral=False) -> dict:
+        o = list(odds) if odds and len(odds) == 3 and all(x and float(x) > 1 for x in odds) else None
+        fx = self._in_feed(home, away)
+        date = pd.Timestamp(fx['date']) if fx else None
+        if ou_odds is None and fx and o:
+            ou_odds = fx.get('ou_odds')
+        return self.pred.predict(home, away, odds=o, ou_odds=ou_odds, date=date, neutral=bool(neutral))
+
+    def analyze_row(self, home: str, away: str, odds=None, neutral=False) -> dict:
         """Numbers for one coupon row, where they came from, and name
         suggestions for anything unrecognised."""
         self.need_ready()
         home, away = str(home or '').strip(), str(away or '').strip()
         if not home or not away:
             return {'home': home, 'away': away, 'probs': None, 'src': 'none', 'sides': {'home': None, 'away': None}}
-        o = list(odds) if odds and len(odds) == 3 and all(x and float(x) > 1 for x in odds) else None
-        r = self.pred.predict(home, away, odds=o)
+        r = self._predict(home, away, odds, neutral=neutral)
         out = {'home': r['home'], 'away': r['away'], 'sides': r['sides'],
                'league': r.get('league'), 'league_name': r.get('league_name', ''), **self._slim(r)}
         if not r['ok']:
@@ -462,11 +486,10 @@ class Engine:
                 'rows': list(fx['rows']), 'error': fx.get('error'), 'loaded_at': fx['loaded_at']}
 
     # ----------------------------------------------------------------- match
-    def match(self, home: str, away: str, odds=None, ou_odds=None) -> dict:
+    def match(self, home: str, away: str, odds=None, ou_odds=None, neutral=False) -> dict:
         """The full card for any pair of teams."""
         self.need_ready()
-        o = list(odds) if odds and len(odds) == 3 and all(x and float(x) > 1 for x in odds) else None
-        r = self.pred.predict(home, away, odds=o, ou_odds=ou_odds)
+        r = self._predict(home, away, odds, ou_odds, neutral)
         r['src'] = SRC_LABEL.get(r.get('src'), r.get('src')) if r['ok'] else 'none'
         return r
 

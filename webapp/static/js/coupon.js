@@ -20,12 +20,13 @@ export class Row {
     this.home = d.home || ''; this.away = d.away || '';
     this.odds = oddsOk(d.odds) ? d.odds : null;
     this.crowd = d.crowd || null; this.lock = d.lock || null;
+    this.neutral = !!d.neutral;                       // national teams: played on neutral ground
     this.an = d.an || null; this.akey = d.an ? this.analysisKey() : null;
     this.busy = false;
   }
   get complete() { return !!(this.home.trim() && this.away.trim()); }
   analysisKey() {
-    return `${norm(this.home)}|${norm(this.away)}|${this.odds ? this.odds.join(',') : ''}`;
+    return `${norm(this.home)}|${norm(this.away)}|${this.odds ? this.odds.join(',') : ''}|${this.neutral ? 'n' : ''}`;
   }
   probs() { return this.an?.probs || UNIFORM; }
   // identity independent of home/away order and of how the name was typed
@@ -90,7 +91,7 @@ export class Coupon {
     if (!this.ready) return;
     const body = {
       rows: this.rows.filter((r) => r.home.trim() || r.away.trim())
-        .map((r) => ({ home: r.home, away: r.away, odds: r.odds, crowd: r.crowd, lock: r.lock })),
+        .map((r) => ({ home: r.home, away: r.away, odds: r.odds, crowd: r.crowd, lock: r.lock, neutral: r.neutral })),
       budget: this.budget, tilt: this.tilt, objective: this.objective,
     };
     try { await api.put('/api/coupon', body); this.emit('saved'); }
@@ -179,7 +180,7 @@ export class Coupon {
     row.busy = true; this.emit('row');
     this.queue.push(async () => {
       try {
-        const res = await api.post('/api/analyze', { home: row.home, away: row.away, odds: row.odds });
+        const res = await api.post('/api/analyze', { home: row.home, away: row.away, odds: row.odds, neutral: row.neutral });
         this.cache.set(key, res);
         if (row.akey === key) this.apply(row, res);
       } catch (e) {

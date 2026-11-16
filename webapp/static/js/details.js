@@ -3,21 +3,27 @@ import { h, pct, fair, modal, SRC_TEXT } from './ui.js';
 import { icon } from './icons.js';
 import { api, store } from './api.js';
 
-export async function showDetails(home, away, coupon, { odds, ou_odds } = {}) {
+export async function showDetails(home, away, coupon, { odds, ou_odds, neutral } = {}) {
   const body = h('div', {}, h('div', { class: 'blank' }, h('span', { class: 'spin-sm' }), ' Loading…'));
   const m = modal('Match', body, [], { wide: true });
   try {
-    const d = await api.post('/api/match', { home, away, odds: odds || null, ou_odds: ou_odds || null });
-    body.replaceChildren(render(d, coupon, m, odds));
+    const d = await api.post('/api/match', { home, away, odds: odds || null, ou_odds: ou_odds || null, neutral: !!neutral });
+    const flip = () => {                      // national teams: home side or neutral ground
+      const row = coupon.find(d.home, d.away);
+      if (row) coupon.edit(row, { neutral: !neutral });
+      m.close();
+      showDetails(home, away, coupon, { odds, ou_odds, neutral: !neutral });
+    };
+    body.replaceChildren(render(d, coupon, m, odds, flip));
   } catch (e) {
     body.replaceChildren(h('div', { class: 'box warn' }, `Could not load: ${e.message}`));
   }
 }
 
-function render(d, coupon, m, oddsIn) {
+function render(d, coupon, m, oddsIn, flip) {
   if (!d.ok) {
     return h('div', {}, h('b', {}, 'No prediction for this pair.'),
-      h('p', { class: 'small muted', style: { marginTop: '6px' } }, 'One of the names is not recognised. Close this and correct it on the coupon.'));
+      h('p', { class: 'small muted', style: { marginTop: '6px' } }, 'No model knows this pair. Correct the names on the coupon, or add the bookmaker odds: with odds the match is priced from the odds alone.'));
   }
   const home = d.home_display; const away = d.away_display;
   const p = d.p1x2; const top = p.indexOf(Math.max(...p));
@@ -56,7 +62,10 @@ function render(d, coupon, m, oddsIn) {
   const age = d.data_age_days;
   const warn = age != null && age > 28
     ? h('div', { class: 'box warn', style: { marginTop: '14px' } }, `${d.league_name} data is ${age} days old. The league is between seasons or the new season is not published yet, so recent form is missing.`) : '';
-  const how = {
+  const notes = (d.notes || []).length
+    ? h('div', { class: `box ${d.old_data || d.kind === 'odds' ? 'warn' : 'info'}`, style: { marginTop: '14px' } }, d.notes.join(' '),
+      d.kind === 'national' ? h('button', { class: 'link', style: { marginLeft: '8px' }, onclick: flip }, d.neutral ? 'Use home advantage' : 'It is on neutral ground') : '') : '';
+  const how = d.kind === 'odds' ? 'The result comes from the bookmaker odds. The goal numbers and the scores come from the goal rates those odds imply, so they need no model.' : {
     odds: 'The bookmaker odds are used for the result, because on matches the models had not seen the odds were more accurate. Over/under combines the model with the over/under odds when they exist.',
     model: 'No odds were found, so the model gives the result. The score table and the over/under numbers come from the same scoreline model and agree with it.',
     national: 'National teams are priced from international ratings and a goals model.',
@@ -70,5 +79,5 @@ function render(d, coupon, m, oddsIn) {
     h('div', { class: 'sect' }, h('h4', {}, 'Goals'), goalsRow),
     h('div', { class: 'sect' }, h('h4', {}, 'Likely scores'),
       h('div', { class: 'scorewrap' }, tbl, h('div', {}, heat, h('div', { class: 'axis small muted', style: { textAlign: 'center', marginTop: '6px' } }, `${home} goals down, ${away} goals across. Cells show %.`)))),
-    warn, h('div', { class: 'note' }, how));
+    warn, notes, h('div', { class: 'note' }, how));
 }

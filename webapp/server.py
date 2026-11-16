@@ -102,7 +102,7 @@ def parse(_r, b):
 
 
 def analyze(_r, b):
-    return ENGINE.analyze_row(b.get('home'), b.get('away'), b.get('odds'))
+    return ENGINE.analyze_row(b.get('home'), b.get('away'), b.get('odds'), b.get('neutral'))
 
 
 def ticket(_r, b):
@@ -126,7 +126,7 @@ def fixtures(r, _b):
 
 
 def match(_r, b):
-    return ENGINE.match(b.get('home', ''), b.get('away', ''), b.get('odds'), b.get('ou_odds'))
+    return ENGINE.match(b.get('home', ''), b.get('away', ''), b.get('odds'), b.get('ou_odds'), b.get('neutral'))
 
 
 def remember(_r, b):
