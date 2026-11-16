@@ -42,6 +42,9 @@ MKT_HOME_ADV = 60.0
 CALENDAR_LEAGUES = {'argentina', 'BRAZIL', 'chn', 'fin', 'japan', 'norsk',
                    'irish', 'swedish', 'usa'}
 KEY = ['league', 'Date', 'HomeTeam', 'AwayTeam']
+# The shortest break between two seasons in the data is 9 days (Romania 2020);
+# every ordinary one is 25 days or more.
+SAME_SEASON_DAYS = 7
 PRE_ODDS = [('AvgH', 'AvgD', 'AvgA'), ('B365H', 'B365D', 'B365A'),
             ('PSH', 'PSD', 'PSA'), ('PH', 'PD', 'PA')]
 
@@ -201,7 +204,9 @@ class FeatureState:
         league's newest matches in this state ('2026' or '2026/2027'). That
         notation is what the state was built from, and the provider can
         change it: Japan moved to an autumn-spring season in 2026, and a fixed
-        list of calendar-year leagues then names a season no team is in."""
+        list of calendar-year leagues then names a season no team is in.
+        A league that played within the last week is still in that season,
+        whatever the calendar says (seasons that ran past July in 2020)."""
         if supplied is not None and pd.notna(supplied):
             return season_id(league, day, supplied)
         newest = None
@@ -211,6 +216,8 @@ class FeatureState:
                 newest = team
         if newest is None:
             return season_id(league, day)
+        if (day - newest.last_date).days <= SAME_SEASON_DAYS:
+            return newest.season                      # the league is mid-season
         if '/' in newest.season:
             start = day.year if day.month >= 7 else day.year - 1
             return f'{start}/{start + 1}'

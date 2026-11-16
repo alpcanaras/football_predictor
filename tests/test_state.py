@@ -59,6 +59,13 @@ class LiveSeason(unittest.TestCase):
         self.assertEqual(self.played(st, 'german', '2026-11-21'), 2)
         self.assertEqual(self.played(st, 'german', '2027-08-21'), 0)
 
+    def test_a_season_that_runs_late_is_still_that_season(self):
+        # 2019/2020 was finished in July and August 2020: the calendar says
+        # 2020/2021, but the league played three days ago
+        st = self.state('german', '2019/2020', ['2020-06-27', '2020-07-04'])
+        self.assertEqual(self.played(st, 'german', '2020-07-07'), 2)
+        self.assertEqual(self.played(st, 'german', '2020-09-18'), 0)    # after the break
+
     def test_a_replayed_match_keeps_the_season_from_its_file(self):
         st = self.state('japan', '2026/2027', ['2026-08-08'])
         f = st.fixture(dict(Date=pd.Timestamp('2026-08-15'), league='japan', HomeTeam='A',
